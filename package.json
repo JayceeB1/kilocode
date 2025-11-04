@@ -44,7 +44,10 @@
 		"supervisor:service": "pnpm --filter @kilocode/supervisor-service run dev",
 		"supervisor:service:build": "pnpm --filter @kilocode/supervisor-service run build",
 		"supervisor:sidecar": "pnpm --filter @kilocode/supervisor-sidecar run dev",
-		"supervisor:sidecar:build": "pnpm --filter @kilocode/supervisor-sidecar run build"
+		"supervisor:sidecar:build": "pnpm --filter @kilocode/supervisor-sidecar run build",
+		"patch:dry-run": "pnpm --filter @kilocode/supervisor-service tsx src/cli/patch.ts --dry-run",
+		"patch:apply": "pnpm --filter @kilocode/supervisor-service tsx src/cli/patch.ts",
+		"sec:scan": "pnpm -w -r run sec:scan || true"
 	},
 	"devDependencies": {
 		"@changesets/changelog-github": "^0.5.1",
@@ -52,7 +55,7 @@
 		"@dotenvx/dotenvx": "^1.34.0",
 		"@roo-code/config-typescript": "workspace:^",
 		"@types/glob": "^9.0.0",
-		"@types/node": "20.x",
+		"@types/node": "^24.1.0",
 		"@vscode/vsce": "3.3.2",
 		"esbuild": "^0.25.0",
 		"eslint": "^9.27.0",

@@ -2,6 +2,7 @@ import { safeWriteJson } from "../../utils/safeWriteJson"
 import * as path from "path"
 import * as os from "os"
 import * as fs from "fs/promises"
+import * as crypto from "crypto"
 import pWaitFor from "p-wait-for"
 import * as vscode from "vscode"
 // kilocode_change start
@@ -3902,6 +3903,176 @@ export const webviewMessageHandler = async (
 			}
 			break
 		}
+		case "supervisor:error": {
+			try {
+				if (!message.payload) {
+					throw new Error("No payload provided for supervisor:error")
+				}
+				await handleSupervisorError(message.payload)
+			} catch (error) {
+				provider.log(
+					`Error handling supervisor error: ${error instanceof Error ? error.message : String(error)}`,
+				)
+			}
+			break
+		}
+		case "supervisor:result": {
+			try {
+				if (!message.payload) {
+					throw new Error("No payload provided for supervisor:result")
+				}
+				await handleSupervisorResult(message.payload)
+			} catch (error) {
+				provider.log(
+					`Error handling supervisor result: ${error instanceof Error ? error.message : String(error)}`,
+				)
+			}
+			break
+		}
+	}
+}
+
+/**
+ * Handles supervisor error messages by persisting error reports and updating the registry
+ * @param payload The error payload from the supervisor service
+ */
+async function handleSupervisorError(payload: any): Promise<void> {
+	try {
+		// Persist the error report to .kilocode/patch-reports/
+		await persistErrorReport(payload)
+
+		// Update the registry with error information
+		await updateRegistryFromMessage(payload)
+
+		provider.log(`Supervisor error handled and persisted: ${payload.error || "Unknown error"}`)
+	} catch (error) {
+		provider.log(`Failed to handle supervisor error: ${error instanceof Error ? error.message : String(error)}`)
+	}
+}
+
+/**
+ * Handles supervisor result messages by updating the registry with successful operations
+ * @param payload The result payload from the supervisor service
+ */
+async function handleSupervisorResult(payload: any): Promise<void> {
+	try {
+		// Update the registry with successful operation information
+		await updateRegistryFromMessage(payload)
+
+		provider.log(`Supervisor result handled successfully: ${payload.operation || "Unknown operation"}`)
+	} catch (error) {
+		provider.log(`Failed to handle supervisor result: ${error instanceof Error ? error.message : String(error)}`)
+	}
+}
+
+/**
+ * Persists error reports to .kilocode/patch-reports/ directory
+ * @param payload The error payload to persist
+ */
+async function persistErrorReport(payload: any): Promise<void> {
+	try {
+		// Get workspace root
+		const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath
+		if (!workspaceRoot) {
+			throw new Error("No workspace folder open")
+		}
+
+		// Create .kilocode/patch-reports directory if it doesn't exist
+		const reportsDir = path.join(workspaceRoot, ".kilocode", "patch-reports")
+		await fs.mkdir(reportsDir, { recursive: true })
+
+		// Generate unique filename with timestamp and UUID
+		const timestamp = new Date().toISOString().replace(/[:.]/g, "-")
+		const uuid = crypto.randomUUID()
+		const filename = `error-${timestamp}-${uuid}.json`
+		const filePath = path.join(reportsDir, filename)
+
+		// Persist the error report using safeWriteJson
+		await safeWriteJson(filePath, {
+			timestamp: new Date().toISOString(),
+			type: "supervisor:error",
+			payload,
+		})
+
+		provider.log(`Error report persisted to: ${filePath}`)
+	} catch (error) {
+		provider.log(`Failed to persist error report: ${error instanceof Error ? error.message : String(error)}`)
+		throw error
+	}
+}
+
+/**
+ * Updates the registry via service API if available, otherwise local write
+ * @param payload The message payload containing registry update information
+ */
+async function updateRegistryFromMessage(payload: any): Promise<void> {
+	try {
+		// Try to update via service API first
+		const supervisorConfig = await readSupervisorConfig()
+
+		if (supervisorConfig.enabled) {
+			// If supervisor is enabled, try to update via service API
+			try {
+				const endpoint = `http://${supervisorConfig.bind}:${supervisorConfig.port}/api/registry`
+				const response = await fetch(endpoint, {
+					method: "POST",
+					headers: {
+						"Content-Type": "application/json",
+					},
+					body: JSON.stringify(payload),
+				})
+
+				if (!response.ok) {
+					throw new Error(`Service API responded with status: ${response.status}`)
+				}
+
+				provider.log(`Registry updated via service API`)
+				return
+			} catch (apiError) {
+				provider.log(
+					`Failed to update registry via service API: ${apiError instanceof Error ? apiError.message : String(apiError)}`,
+				)
+				// Fall back to local write
+			}
+		}
+
+		// Local write fallback or when supervisor is disabled
+		const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath
+		if (!workspaceRoot) {
+			throw new Error("No workspace folder open")
+		}
+
+		const registryDir = path.join(workspaceRoot, ".kilocode")
+		await fs.mkdir(registryDir, { recursive: true })
+		const registryPath = path.join(registryDir, "patch-registry.json")
+
+		// Read existing registry or create new one
+		let registry = {}
+		try {
+			const existingData = await fs.readFile(registryPath, "utf8")
+			registry = JSON.parse(existingData)
+		} catch (readError) {
+			// File doesn't exist or is invalid, start with empty registry
+			registry = {}
+		}
+
+		// Update registry with new payload
+		const timestamp = new Date().toISOString()
+		const entryId = payload.id || `entry-${Date.now()}`
+
+		registry[entryId] = {
+			timestamp,
+			type: payload.type || "unknown",
+			...payload,
+		}
+
+		// Write updated registry using safeWriteJson
+		await safeWriteJson(registryPath, registry)
+
+		provider.log(`Registry updated locally at: ${registryPath}`)
+	} catch (error) {
+		provider.log(`Failed to update registry: ${error instanceof Error ? error.message : String(error)}`)
+		throw error
 	}
 }
 

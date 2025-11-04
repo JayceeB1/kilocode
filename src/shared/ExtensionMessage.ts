@@ -64,6 +64,24 @@ export interface IndexingStatusUpdateMessage {
 	values: IndexingStatus
 }
 
+/**
+ * Message type for supervisor error notifications
+ */
+export interface SupervisorErrorMessage {
+	type: "supervisor:error"
+	/** Error payload containing error details */
+	payload: any
+}
+
+/**
+ * Message type for supervisor result notifications
+ */
+export interface SupervisorResultMessage {
+	type: "supervisor:result"
+	/** Result payload containing operation results */
+	payload: any
+}
+
 export interface LanguageModelChatSelector {
 	vendor?: string
 	family?: string
@@ -163,6 +181,8 @@ export interface ExtensionMessage {
 		| "showTimestamps" // kilocode_change
 		| "organizationSwitchResult"
 		| "supervisorConfig" // Local Supervisor configuration
+		| "supervisorError" // Supervisor error notification
+		| "supervisorResult" // Supervisor result notification
 	text?: string
 	// kilocode_change start
 	payload?:
@@ -280,6 +300,9 @@ export interface ExtensionMessage {
 	organizationId?: string | null // For organizationSwitchResult
 	config?: any // For supervisorConfig messages
 }
+
+// Union type for all extension message types including supervisor messages
+export type ExtensionMessageUnion = ExtensionMessage | SupervisorErrorMessage | SupervisorResultMessage
 
 export type ExtensionState = Pick<
 	GlobalSettings,
