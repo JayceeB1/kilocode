@@ -41,9 +41,82 @@
 
 [![Watch the video](https://img.youtube.com/vi/pqGfYXgrhig/maxresdefault.jpg)](https://youtu.be/pqGfYXgrhig)
 
-## Extension Development
+## Local Supervisor
+
+KiloCode Local Supervisor provides on-device code analysis and auto-fix capabilities using local LLM models. It offers enhanced privacy and offline operation while maintaining the same powerful analysis features.
+
+### Quickstart
+
+1. **Install Ollama** (required for local LLM):
+
+    ```bash
+    # macOS
+    brew install ollama
+
+    # Linux
+    curl -fsSL https://ollama.ai/install.sh | sh
+
+    # Windows
+    # Download from https://ollama.ai/download
+    ```
+
+2. **Download a model**:
+
+    ```bash
+    ollama pull llama3.1:8b-instruct-q4
+    ```
+
+3. **Start the supervisor service**:
+
+    ```bash
+    # From the kilocode repository root
+    pnpm supervisor:dev
+    ```
+
+4. **Configure VS Code**:
+    - Open VS Code settings
+    - Search for "KiloCode Supervisor"
+    - Enable "kilo-code.supervisor.enabled"
+    - Set "kilo-code.supervisor.serviceUrl" to `http://127.0.0.1:43110`
+
+### Features
+
+- **Local Analysis**: Code analysis runs entirely on your machine
+- **Terminal Capture**: Automatically captures and analyzes failed command outputs
+- **Problem Matching**: Integrates with VS Code's problem panel
+- **Auto-fix Suggestions**: Provides intelligent fix suggestions with confidence scores
+- **Privacy First**: No code sent to external services
+
+### Configuration
+
+Create `.kilocode/supervisor.config.json` in your project root:
+
+```json
+{
+	"bind": "127.0.0.1",
+	"port": 43110,
+	"provider": "ollama",
+	"model": "llama3.1:8b-instruct-q4",
+	"max_tokens": 768,
+	"temperature": 0.2,
+	"autoFixWhitelist": ["path_not_found", "missing_dep", "flaky_test_rerun"],
+	"autoFixMinConfidence": 0.75,
+	"reflexion": { "enabled": true, "maxItems": 128, "ttlDays": 60 }
+}
+```
+
+### Security & Privacy
+
+- **Localhost Only**: Supervisor service only accepts connections from localhost
+- **No Telemetry**: All analysis happens locally, no data sent externally
+- **Configurable Policies**: Fine-grained control over auto-fix behavior
+- **Sandboxed Execution**: Service runs in isolated environment
+
+### Development
 
 For details on building and developing the extension, see [DEVELOPMENT.md](/DEVELOPMENT.md)
+
+For Local Supervisor development details, see [README_SUPERVISOR.md](/README_SUPERVISOR.md)
 
 ## Contributors to Kilo
 

@@ -10,6 +10,7 @@
 		"install": "node scripts/bootstrap.mjs",
 		"install:all": "node scripts/bootstrap.mjs",
 		"lint": "turbo lint --log-order grouped --output-logs new-only",
+		"lint:fix": "turbo lint --log-order grouped --output-logs new-only --fix",
 		"check-types": "turbo check-types --log-order grouped --output-logs new-only",
 		"test": "turbo test --log-order grouped --output-logs new-only",
 		"format": "turbo format --log-order grouped --output-logs new-only",
@@ -39,7 +40,11 @@
 		"cli:dev": "pnpm --filter @kilocode/cli run dev",
 		"cli:run": "pnpm --filter @kilocode/cli run start",
 		"docs:start": "pnpm --filter kilocode-docs start",
-		"docs:build": "pnpm --filter kilocode-docs build"
+		"docs:build": "pnpm --filter kilocode-docs build",
+		"supervisor:service": "pnpm --filter @kilocode/supervisor-service run dev",
+		"supervisor:service:build": "pnpm --filter @kilocode/supervisor-service run build",
+		"supervisor:sidecar": "pnpm --filter @kilocode/supervisor-sidecar run dev",
+		"supervisor:sidecar:build": "pnpm --filter @kilocode/supervisor-sidecar run build"
 	},
 	"devDependencies": {
 		"@changesets/changelog-github": "^0.5.1",

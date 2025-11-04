@@ -1,0 +1,79 @@
+{
+	"name": "@roo-code/supervisor-sidecar",
+	"description": "KiloCode Local Supervisor Sidecar - VS Code extension for terminal capture and problem matching",
+	"version": "0.0.0",
+	"type": "module",
+	"main": "./dist/index.js",
+	"exports": "./src/index.ts",
+	"scripts": {
+		"lint": "eslint src --ext=ts --max-warnings=0",
+		"check-types": "tsc --noEmit",
+		"test": "vitest run",
+		"build": "tsup",
+		"dev": "tsx watch src/index.ts",
+		"clean": "rimraf dist .turbo"
+	},
+	"dependencies": {
+		"@roo-code/types": "workspace:^",
+		"axios": "^1.12.0",
+		"zod": "^3.25.61"
+	},
+	"devDependencies": {
+		"@roo-code/config-eslint": "workspace:^",
+		"@roo-code/config-typescript": "workspace:^",
+		"@types/node": "^24.1.0",
+		"@types/vscode": "^1.84.0",
+		"tsup": "^8.3.5",
+		"tsx": "^4.19.3",
+		"vitest": "^3.2.3"
+	},
+	"contributes": {
+		"commands": [
+			{
+				"command": "kilo-code.supervisor.toggleCapture",
+				"title": "Toggle Supervisor Terminal Capture",
+				"category": "KiloCode Supervisor"
+			},
+			{
+				"command": "kilo-code.supervisor.analyzeCurrentFile",
+				"title": "Analyze Current File with Supervisor",
+				"category": "KiloCode Supervisor"
+			},
+			{
+				"command": "kilo-code.supervisor.showProblems",
+				"title": "Show Supervisor Problems",
+				"category": "KiloCode Supervisor"
+			}
+		],
+		"configuration": {
+			"title": "KiloCode Supervisor",
+			"properties": {
+				"kilo-code.supervisor.enabled": {
+					"type": "boolean",
+					"default": true,
+					"description": "Enable KiloCode Supervisor terminal capture and analysis"
+				},
+				"kilo-code.supervisor.serviceUrl": {
+					"type": "string",
+					"default": "http://127.0.0.1:43110",
+					"description": "URL of the KiloCode Supervisor service"
+				},
+				"kilo-code.supervisor.autoAnalyze": {
+					"type": "boolean",
+					"default": true,
+					"description": "Automatically analyze terminal output for issues"
+				},
+				"kilo-code.supervisor.captureCommands": {
+					"type": "array",
+					"default": [
+						"npm test",
+						"pnpm test",
+						"yarn test",
+						"make test"
+					],
+					"description": "Commands that trigger supervisor analysis"
+				}
+			}
+		}
+	}
+}

@@ -32,7 +32,7 @@
 		}
 	},
 
-	"forwardPorts": [3000, 5173, 8080],
+	"forwardPorts": [3000, 5173, 8080, 43110],
 	"portsAttributes": {
 		"3000": {
 			"label": "Dev Server",
@@ -45,6 +45,10 @@
 		"8080": {
 			"label": "Other Services",
 			"onAutoForward": "silent"
+		},
+		"43110": {
+			"label": "KiloCode Supervisor Service",
+			"onAutoForward": "notify"
 		}
 	},
 

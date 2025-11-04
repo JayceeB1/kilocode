@@ -61,6 +61,50 @@
 			},
 			"resolveSourceMapLocations": ["${workspaceFolder}/**", "!**/node_modules/**"],
 			"presentation": { "hidden": false, "group": "tasks", "order": 2 }
+		},
+		{
+			"name": "Debug Supervisor Service",
+			"type": "node",
+			"request": "launch",
+			"program": "${workspaceFolder}/packages/supervisor-service/src/index.ts",
+			"cwd": "${workspaceFolder}/packages/supervisor-service",
+			"runtimeArgs": ["--loader", "tsx"],
+			"env": {
+				"NODE_ENV": "development"
+			},
+			"console": "integratedTerminal",
+			"restart": true,
+			"presentation": {
+				"hidden": false,
+				"group": "supervisor",
+				"order": 1
+			},
+			"problemMatcher": {
+				"owner": "supervisor-service",
+				"pattern": {
+					"regexp": "^$"
+				}
+			}
+		},
+		{
+			"name": "Debug Extension with Supervisor",
+			"type": "extensionHost",
+			"request": "launch",
+			"runtimeExecutable": "${execPath}",
+			"args": ["--extensionDevelopmentPath=${workspaceFolder}/src", "--disable-extensions"],
+			"sourceMaps": true,
+			"outFiles": ["${workspaceFolder}/dist/**/*.js"],
+			"preLaunchTask": "supervisor:dev",
+			"env": {
+				"NODE_ENV": "development",
+				"VSCODE_DEBUG_MODE": "true"
+			},
+			"resolveSourceMapLocations": ["${workspaceFolder}/**", "!**/node_modules/**"],
+			"presentation": {
+				"hidden": false,
+				"group": "supervisor",
+				"order": 2
+			}
 		}
 	],
 	"inputs": [

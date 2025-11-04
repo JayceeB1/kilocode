@@ -66,3 +66,13 @@ qdrant_storage/
 # allow multiple local clones with different workspaces with different colors
 # to make it easier to work on features in parallel
 *.code-workspace
+.kilocode/mcp.json
+kilo_code_local_supervisor_project_reference_v_0.md
+kilocode-local-supervisor-kickstart-plan.md
+
+.env
+.env.*
+**/config.local.*.json
+**/*secrets*.json
+**/mcp*/**/*.local.*
+**/mcp*/**/*config*.json

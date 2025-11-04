@@ -156,6 +156,92 @@
 			"problemMatcher": [],
 			"label": "docs: build",
 			"detail": "Build the Docusaurus site for production"
+		},
+		{
+			"label": "supervisor:dev",
+			"type": "shell",
+			"command": "pnpm --filter @roo-code/supervisor-service dev",
+			"group": "build",
+			"problemMatcher": {
+				"owner": "supervisor-service",
+				"pattern": {
+					"regexp": "^$"
+				},
+				"background": {
+					"activeOnStart": true,
+					"beginsPattern": ".*KiloCode Supervisor Service started.*",
+					"endsPattern": ".*Server closed successfully.*"
+				}
+			},
+			"isBackground": true,
+			"presentation": {
+				"reveal": "always",
+				"panel": "new"
+			}
+		},
+		{
+			"label": "supervisor:build",
+			"type": "shell",
+			"command": "pnpm --filter @roo-code/supervisor-service build",
+			"group": "build",
+			"problemMatcher": {
+				"owner": "supervisor-service",
+				"pattern": {
+					"regexp": "^$"
+				}
+			},
+			"presentation": {
+				"reveal": "always",
+				"panel": "shared"
+			}
+		},
+		{
+			"label": "supervisor:test",
+			"type": "shell",
+			"command": "cd packages/supervisor-service && npx vitest run",
+			"group": "test",
+			"problemMatcher": {
+				"owner": "vitest",
+				"pattern": {
+					"regexp": "^$"
+				}
+			},
+			"presentation": {
+				"reveal": "always",
+				"panel": "shared"
+			}
+		},
+		{
+			"label": "supervisor-sidecar:build",
+			"type": "shell",
+			"command": "pnpm --filter @roo-code/supervisor-sidecar build",
+			"group": "build",
+			"problemMatcher": {
+				"owner": "supervisor-sidecar",
+				"pattern": {
+					"regexp": "^$"
+				}
+			},
+			"presentation": {
+				"reveal": "always",
+				"panel": "shared"
+			}
+		},
+		{
+			"label": "supervisor-sidecar:test",
+			"type": "shell",
+			"command": "cd packages/supervisor-sidecar && npx vitest run",
+			"group": "test",
+			"problemMatcher": {
+				"owner": "vitest",
+				"pattern": {
+					"regexp": "^$"
+				}
+			},
+			"presentation": {
+				"reveal": "always",
+				"panel": "shared"
+			}
 		}
 	]
 }
