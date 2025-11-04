@@ -35,6 +35,8 @@ import {
 import { useAppTranslation } from "@src/i18n/TranslationContext"
 import { useExtensionState } from "@src/context/ExtensionStateContext"
 import { useSelectedModel } from "@src/components/ui/hooks/useSelectedModel"
+import { usePatcherChat } from "@src/state/patcherSlice"
+import SmartPatchMessage from "./SmartPatchMessage"
 // import RooHero from "@src/components/welcome/RooHero" // kilocode_change: unused
 // import RooTips from "@src/components/welcome/RooTips" // kilocode_change: unused
 import { StandardTooltip } from "@src/components/ui"
@@ -1607,6 +1609,8 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 		userRespondedRef.current = true
 	}, [])
 
+	const { getEvent } = usePatcherChat()
+
 	const itemContent = useCallback(
 		(index: number, messageOrGroup: ClineMessage | ClineMessage[]) => {
 			// browser session group
@@ -1630,41 +1634,50 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 			}
 
 			// regular message
+			const message = messageOrGroup as ClineMessage
+			const messageId = message.ts.toString()
+
+			// Check if there's a patcher event for this message
+			const patcherEvent = getEvent(messageId)
+
 			return (
-				<ChatRow
-					key={messageOrGroup.ts}
-					message={messageOrGroup}
-					isExpanded={expandedRows[messageOrGroup.ts] || false}
-					onToggleExpand={toggleRowExpansion} // This was already stabilized
-					lastModifiedMessage={modifiedMessages.at(-1)} // Original direct access
-					isLast={index === groupedMessages.length - 1} // Original direct access
-					onHeightChange={handleRowHeightChange}
-					isStreaming={isStreaming}
-					onSuggestionClick={handleSuggestionClickInRow} // This was already stabilized
-					onBatchFileResponse={handleBatchFileResponse}
-					highlighted={highlightedMessageIndex === index} // kilocode_change: add highlight prop
-					enableCheckpoints={enableCheckpoints} // kilocode_change
-					onFollowUpUnmount={handleFollowUpUnmount}
-					isFollowUpAnswered={messageOrGroup.isAnswered === true || messageOrGroup.ts === currentFollowUpTs}
-					editable={
-						messageOrGroup.type === "ask" &&
-						messageOrGroup.ask === "tool" &&
-						(() => {
-							let tool: any = {}
-							try {
-								tool = JSON.parse(messageOrGroup.text || "{}")
-							} catch (_) {
-								if (messageOrGroup.text?.includes("updateTodoList")) {
-									tool = { tool: "updateTodoList" }
+				<div key={message.ts}>
+					<ChatRow
+						message={message}
+						isExpanded={expandedRows[message.ts] || false}
+						onToggleExpand={toggleRowExpansion} // This was already stabilized
+						lastModifiedMessage={modifiedMessages.at(-1)} // Original direct access
+						isLast={index === groupedMessages.length - 1} // Original direct access
+						onHeightChange={handleRowHeightChange}
+						isStreaming={isStreaming}
+						onSuggestionClick={handleSuggestionClickInRow} // This was already stabilized
+						onBatchFileResponse={handleBatchFileResponse}
+						highlighted={highlightedMessageIndex === index} // kilocode_change: add highlight prop
+						enableCheckpoints={enableCheckpoints} // kilocode_change
+						onFollowUpUnmount={handleFollowUpUnmount}
+						isFollowUpAnswered={message.isAnswered === true || message.ts === currentFollowUpTs}
+						editable={
+							message.type === "ask" &&
+							message.ask === "tool" &&
+							(() => {
+								let tool: any = {}
+								try {
+									tool = JSON.parse(message.text || "{}")
+								} catch (_) {
+									if (message.text?.includes("updateTodoList")) {
+										tool = { tool: "updateTodoList" }
+									}
 								}
-							}
-							if (tool.tool === "updateTodoList" && alwaysAllowUpdateTodoList) {
-								return false
-							}
-							return tool.tool === "updateTodoList" && enableButtons && !!primaryButtonText
-						})()
-					}
-				/>
+								if (tool.tool === "updateTodoList" && alwaysAllowUpdateTodoList) {
+									return false
+								}
+								return tool.tool === "updateTodoList" && enableButtons && !!primaryButtonText
+							})()
+						}
+					/>
+					{/* Render Smart Patcher card if there's a patcher event for this message */}
+					{patcherEvent && <SmartPatchMessage messageId={messageId} />}
+				</div>
 			)
 		},
 		[
@@ -1683,6 +1696,7 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 			alwaysAllowUpdateTodoList,
 			enableButtons,
 			primaryButtonText,
+			getEvent, // Add getEvent to dependencies
 		],
 	)
 

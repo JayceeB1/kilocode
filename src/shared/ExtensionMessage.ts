@@ -82,6 +82,39 @@ export interface SupervisorResultMessage {
 	payload: any
 }
 
+/**
+ * Message type for unsuccessful edit operations
+ */
+export interface EditUnsuccessfulMessage {
+	type: "edit:unsuccessful"
+	/** Payload containing error details */
+	payload: {
+		/** ID of the message that triggered the edit */
+		messageId: string
+		/** Optional file path where the edit failed */
+		file?: string
+		/** Optional error description */
+		error?: string
+	}
+}
+
+/**
+ * Message type for supervisor patcher events
+ */
+export interface SupervisorPatcherEventMessage {
+	type: "supervisor:patcherEvent"
+	/** ID of the message that triggered the patcher event */
+	messageId: string
+	/** Classification of the patcher result */
+	classification: "applied" | "anchor_mismatch" | "lint_error" | "type_error" | "noop" | "unknown"
+	/** Optional file path where the patcher was applied */
+	file?: string
+	/** Optional error description if the patcher failed */
+	error?: string
+	/** Optional suggested plan for remediation */
+	suggestedPlan?: any
+}
+
 export interface LanguageModelChatSelector {
 	vendor?: string
 	family?: string
@@ -183,6 +216,7 @@ export interface ExtensionMessage {
 		| "supervisorConfig" // Local Supervisor configuration
 		| "supervisorError" // Supervisor error notification
 		| "supervisorResult" // Supervisor result notification
+		| "supervisor:patcherEvent" // Supervisor patcher event notification
 	text?: string
 	// kilocode_change start
 	payload?:
@@ -299,10 +333,20 @@ export interface ExtensionMessage {
 	list?: string[] // For dismissedUpsells
 	organizationId?: string | null // For organizationSwitchResult
 	config?: any // For supervisorConfig messages
+	// Properties for supervisor:patcherEvent messages
+	messageId?: string // ID of message that triggered patcher event
+	classification?: "applied" | "anchor_mismatch" | "lint_error" | "type_error" | "noop" | "unknown" // Classification of patcher result
+	file?: string // Optional file path where patcher was applied
+	suggestedPlan?: any // Optional suggested plan for remediation
 }
 
 // Union type for all extension message types including supervisor messages
-export type ExtensionMessageUnion = ExtensionMessage | SupervisorErrorMessage | SupervisorResultMessage
+export type ExtensionMessageUnion =
+	| ExtensionMessage
+	| SupervisorErrorMessage
+	| SupervisorResultMessage
+	| EditUnsuccessfulMessage
+	| SupervisorPatcherEventMessage
 
 export type ExtensionState = Pick<
 	GlobalSettings,

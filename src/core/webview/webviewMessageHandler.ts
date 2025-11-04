@@ -17,6 +17,7 @@ import {
 	TasksByIdRequestPayload,
 	UpdateGlobalStateMessage,
 } from "../../shared/WebviewMessage"
+import { EditUnsuccessfulMessage } from "../../shared/ExtensionMessage"
 // kilocode_change end
 
 import {
@@ -90,7 +91,7 @@ import { AutoPurgeScheduler } from "../../services/auto-purge" // kilocode_chang
 
 export const webviewMessageHandler = async (
 	provider: ClineProvider,
-	message: MaybeTypedWebviewMessage, // kilocode_change switch to MaybeTypedWebviewMessage for better type-safety
+	message: MaybeTypedWebviewMessage | EditUnsuccessfulMessage, // Include EditUnsuccessfulMessage type
 	marketplaceManager?: MarketplaceManager,
 ) => {
 	// Utility functions provided for concise get/update of global state via contextProxy API.
@@ -3908,7 +3909,7 @@ export const webviewMessageHandler = async (
 				if (!message.payload) {
 					throw new Error("No payload provided for supervisor:error")
 				}
-				await handleSupervisorError(message.payload)
+				await handleSupervisorError(message.payload, provider)
 			} catch (error) {
 				provider.log(
 					`Error handling supervisor error: ${error instanceof Error ? error.message : String(error)}`,
@@ -3921,10 +3922,50 @@ export const webviewMessageHandler = async (
 				if (!message.payload) {
 					throw new Error("No payload provided for supervisor:result")
 				}
-				await handleSupervisorResult(message.payload)
+				await handleSupervisorResult(message.payload, provider)
 			} catch (error) {
 				provider.log(
 					`Error handling supervisor result: ${error instanceof Error ? error.message : String(error)}`,
+				)
+			}
+			break
+		}
+		case "edit:unsuccessful": {
+			/**
+			 * Handles unsuccessful edit operations from the supervisor service
+			 * Extracts error information and forwards it to the webview as a patcher event
+			 */
+			try {
+				const editMessage = message as EditUnsuccessfulMessage
+
+				if (!editMessage.payload) {
+					provider.log("Received edit:unsuccessful message without payload")
+					break
+				}
+
+				const { messageId, file, error } = editMessage.payload
+
+				if (!messageId) {
+					provider.log("Received edit:unsuccessful message without messageId")
+					break
+				}
+
+				// Post to webview with supervisor:patcherEvent type
+				await provider.postMessageToWebview({
+					type: "supervisor:patcherEvent",
+					messageId,
+					classification: "anchor_mismatch", // Default classification for now
+					file: file || undefined,
+					error: error || undefined,
+					suggestedPlan: null, // Set to null for now
+				})
+
+				provider.log(
+					`Processed edit:unsuccessful message for ${messageId}${file ? ` in file ${file}` : ""}${error ? ` with error: ${error}` : ""}`,
+				)
+			} catch (error) {
+				provider.log(
+					`Error handling edit:unsuccessful message: ${error instanceof Error ? error.message : String(error)}`,
 				)
 			}
 			break
@@ -3936,13 +3977,13 @@ export const webviewMessageHandler = async (
  * Handles supervisor error messages by persisting error reports and updating the registry
  * @param payload The error payload from the supervisor service
  */
-async function handleSupervisorError(payload: any): Promise<void> {
+async function handleSupervisorError(payload: any, provider: ClineProvider): Promise<void> {
 	try {
 		// Persist the error report to .kilocode/patch-reports/
-		await persistErrorReport(payload)
+		await persistErrorReport(payload, provider)
 
 		// Update the registry with error information
-		await updateRegistryFromMessage(payload)
+		await updateRegistryFromMessage(payload, provider)
 
 		provider.log(`Supervisor error handled and persisted: ${payload.error || "Unknown error"}`)
 	} catch (error) {
@@ -3954,10 +3995,10 @@ async function handleSupervisorError(payload: any): Promise<void> {
  * Handles supervisor result messages by updating the registry with successful operations
  * @param payload The result payload from the supervisor service
  */
-async function handleSupervisorResult(payload: any): Promise<void> {
+async function handleSupervisorResult(payload: any, provider: ClineProvider): Promise<void> {
 	try {
 		// Update the registry with successful operation information
-		await updateRegistryFromMessage(payload)
+		await updateRegistryFromMessage(payload, provider)
 
 		provider.log(`Supervisor result handled successfully: ${payload.operation || "Unknown operation"}`)
 	} catch (error) {
@@ -3969,7 +4010,7 @@ async function handleSupervisorResult(payload: any): Promise<void> {
  * Persists error reports to .kilocode/patch-reports/ directory
  * @param payload The error payload to persist
  */
-async function persistErrorReport(payload: any): Promise<void> {
+async function persistErrorReport(payload: any, provider: ClineProvider): Promise<void> {
 	try {
 		// Get workspace root
 		const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath
@@ -4005,7 +4046,7 @@ async function persistErrorReport(payload: any): Promise<void> {
  * Updates the registry via service API if available, otherwise local write
  * @param payload The message payload containing registry update information
  */
-async function updateRegistryFromMessage(payload: any): Promise<void> {
+async function updateRegistryFromMessage(payload: any, provider: ClineProvider): Promise<void> {
 	try {
 		// Try to update via service API first
 		const supervisorConfig = await readSupervisorConfig()
@@ -4047,7 +4088,7 @@ async function updateRegistryFromMessage(payload: any): Promise<void> {
 		const registryPath = path.join(registryDir, "patch-registry.json")
 
 		// Read existing registry or create new one
-		let registry = {}
+		let registry: Record<string, any> = {}
 		try {
 			const existingData = await fs.readFile(registryPath, "utf8")
 			registry = JSON.parse(existingData)

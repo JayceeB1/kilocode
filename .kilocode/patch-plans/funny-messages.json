@@ -1,0 +1,78 @@
+{
+	"version": 1,
+	"maxPerClass": 20,
+	"messages": {
+		"applied": [
+			"Smart patcher to the rescue! 🛠️",
+			"Patch applied. Code karma restored. ✔️",
+			"I cleaned up after the model. You're welcome. 😏",
+			"Fixed it. Carry on, human. 👍",
+			"All green. Minimal, safe, idempotent. ✅",
+			"Diff landed without drama. 🎯",
+			"Nudged code into place. Done. 🧩"
+		],
+		"anchor_mismatch": [
+			"No anchor match—drafting safer anchors. 🧭",
+			"Model missed the spot; I'll guide it. 🗺️",
+			"Exact match failed; trying robust context. 🔍",
+			"Anchors shifted—switching to fuzzy mode. 🧶",
+			"Text moved; proposing resilient insert points. 📌",
+			"Can't latch here; suggesting nearby seam. 🪡"
+		],
+		"lint_error": [
+			"Lint is upset—time to sweep. 🧹",
+			"Unused imports spotted; decluttering. ✂️",
+			"ESLint says nope; I'll make it happy. 😅",
+			"Formatting sins detected; penance incoming. 🧽",
+			"Shadowed vars—let's rename neatly. 🧭",
+			"Rules are rules; quick tidy. 📏"
+		],
+		"type_error": [
+			"Types disagree—mediating. 📐",
+			"TS types out of tune; retuning. 🎻",
+			"Narrowing types before progress. 🔧",
+			"Missing types—adding safely. 🧱",
+			"Generics went feral; corralling them. 🐎",
+			"Union needs love; refining. 💍"
+		],
+		"ast_error": [
+			"AST transform balked—rolling back safely. 🪵",
+			"Parser grumpy; using text anchors instead. 🧰",
+			"Node path brittle; proposing simpler plan. 🧪",
+			"Syntax tree says 'nope'—taking the scenic route. 🌲",
+			"Transformer stubbed; staying surgical. 🛠️"
+		],
+		"rpc_timeout": [
+			"IPC took a nap—retrying calmly. 😴",
+			"Timeout—keeping state consistent. ⏳",
+			"Slow bridge; I'll try a lighter touch. 🌉",
+			"Waiting room full; rescheduling politely. 🕒",
+			"Lost ping—no panic, no writes. 🧯"
+		],
+		"noop": [
+			"Already patched. Chill. 😎",
+			"No change needed; we're aligned. 🤝",
+			"Identical content; skipping writes. 🧘",
+			"Nothing to do—moving on. 🏃",
+			"Same-same; registry updated only. 🗒️"
+		],
+		"already_applied": [
+			"Patch was already in—nice déjà vu. 🔁",
+			"Nothing new; code already matches. 📚",
+			"All set; I found the change in place. 🧭"
+		],
+		"envelope_violation": [
+			"Outside allowed paths—blocked by envelope. 📦",
+			"Operation denied by policy—staying safe. 🚫",
+			"Scope guard triggered; no edits. 🛡️",
+			"Forbidden op here; propose relocation. 🧳"
+		],
+		"plan_guard_fail": ["Plan flunked safety check. 🧯", "Guard rails lit up—adjusting plan. 🚧"],
+		"unknown": [
+			"Smart patcher reporting. 👋",
+			"Odd case; keeping edits minimal. 🐛",
+			"Unusual signal; sandboxing actions. 🏝️",
+			"Huh. Filing a neat report. 📄"
+		]
+	}
+}
