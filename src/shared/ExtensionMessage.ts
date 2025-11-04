@@ -162,6 +162,7 @@ export interface ExtensionMessage {
 		| "dismissedUpsells"
 		| "showTimestamps" // kilocode_change
 		| "organizationSwitchResult"
+		| "supervisorConfig" // Local Supervisor configuration
 	text?: string
 	// kilocode_change start
 	payload?:
@@ -169,6 +170,8 @@ export interface ExtensionMessage {
 		| BalanceDataResponsePayload
 		| TasksByIdResponsePayload
 		| TaskHistoryResponsePayload
+		| { type: "supervisor:get"; result?: any; error?: string }
+		| { type: "supervisor:set"; result?: any; error?: string }
 	// kilocode_change end
 	action?:
 		| "chatButtonClicked"
@@ -275,6 +278,7 @@ export interface ExtensionMessage {
 	queuedMessages?: QueuedMessage[]
 	list?: string[] // For dismissedUpsells
 	organizationId?: string | null // For organizationSwitchResult
+	config?: any // For supervisorConfig messages
 }
 
 export type ExtensionState = Pick<

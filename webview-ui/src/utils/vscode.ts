@@ -79,6 +79,41 @@ class VSCodeAPIWrapper {
 // Exports class singleton to prevent multiple invocations of acquireVsCodeApi.
 export const vscode = new VSCodeAPIWrapper()
 
+// RPC "invoke" simple (request/response avec id)
+type Pending = { resolve: (v: any) => void; reject: (e: any) => void }
+const pending = new Map<string, Pending>()
+
+function uid() {
+	return Math.random().toString(36).slice(2)
+}
+
+export function invoke<T = any>(command: string, payload?: any): Promise<T> {
+	const id = uid()
+	return new Promise<T>((resolve, reject) => {
+		pending.set(id, { resolve, reject })
+		// Type assertion to bypass TypeScript check for RPC messages
+		;(vscode.postMessage as any)({ __rpc: true, id, command, payload })
+		// timeout safe-guard 8s
+		setTimeout(() => {
+			if (pending.has(id)) {
+				pending.delete(id)
+				reject(new Error(`RPC timeout for ${command}`))
+			}
+		}, 8000)
+	})
+}
+
+// Handler messages depuis l'extension
+window.addEventListener("message", (event) => {
+	const msg = event.data
+	if (!msg || !msg.__rpc) return
+	const p = pending.get(msg.replyTo)
+	if (!p) return
+	pending.delete(msg.replyTo)
+	if (msg.error) p.reject(new Error(msg.error))
+	else p.resolve(msg.result)
+})
+
 // kilocode_change start
 // Make vscode available globally - this allows the playwright tests
 // to post messages directly so we can setup provider credentials

@@ -54,6 +54,7 @@ import { ChatTextArea } from "./ChatTextArea"
 // import TaskHeader from "./TaskHeader"// kilocode_change
 import KiloTaskHeader from "../kilocode/KiloTaskHeader" // kilocode_change
 import AutoApproveMenu from "./AutoApproveMenu"
+import ToolbarSupervisorToggle from "./ToolbarSupervisorToggle"
 import BottomControls from "../kilocode/BottomControls" // kilocode_change
 import SystemPromptWarning from "./SystemPromptWarning"
 import { showSystemNotification } from "@/kilocode/helpers" // kilocode_change
@@ -2097,6 +2098,7 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 										? "opacity-100"
 										: "opacity-50"
 							}`}>
+							<ToolbarSupervisorToggle />
 							{showScrollToBottom ? (
 								<StandardTooltip content={t("chat:scrollToBottom")}>
 									<VSCodeButton

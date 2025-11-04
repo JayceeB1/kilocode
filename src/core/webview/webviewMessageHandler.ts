@@ -3863,5 +3863,108 @@ export const webviewMessageHandler = async (
 			})
 			break
 		}
+		case "supervisor:get": {
+			try {
+				const cfg = await readSupervisorConfig()
+				await provider.postMessageToWebview({
+					type: "supervisorConfig",
+					config: cfg,
+				})
+			} catch (error) {
+				provider.log(
+					`Error getting supervisor config: ${error instanceof Error ? error.message : String(error)}`,
+				)
+				await provider.postMessageToWebview({
+					type: "supervisorConfig",
+					error: error instanceof Error ? error.message : String(error),
+				})
+			}
+			break
+		}
+		case "supervisor:set": {
+			try {
+				if (!message.payload) {
+					throw new Error("No configuration provided")
+				}
+				const cfg = await validateAndWriteSupervisorConfig(message.payload)
+				await provider.postMessageToWebview({
+					type: "supervisorConfig",
+					config: cfg,
+				})
+			} catch (error) {
+				provider.log(
+					`Error setting supervisor config: ${error instanceof Error ? error.message : String(error)}`,
+				)
+				await provider.postMessageToWebview({
+					type: "supervisorConfig",
+					error: error instanceof Error ? error.message : String(error),
+				})
+			}
+			break
+		}
 	}
+}
+
+// Supervisor configuration helper functions
+type SupervisorConfig = {
+	version: 1
+	enabled: boolean
+	autoLaunch: boolean
+	bind: string
+	port: number
+	provider: string
+	endpoint: string
+	model: string
+	max_tokens: number
+	temperature: number
+	allowLAN: boolean
+	allowedLANs: string[]
+	redactLog: boolean
+}
+
+async function getConfigPath(): Promise<string> {
+	const root = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath
+	if (!root) throw new Error("No workspace open")
+	return path.join(root, ".kilocode", "supervisor.config.json")
+}
+
+async function readSupervisorConfig(): Promise<SupervisorConfig> {
+	const file = await getConfigPath()
+	try {
+		const raw = await fs.readFile(file, "utf8")
+		const cfg = JSON.parse(raw)
+		return validateSupervisorConfig(cfg)
+	} catch {
+		// Default configuration if file doesn't exist
+		return validateSupervisorConfig({
+			version: 1,
+			enabled: false,
+			autoLaunch: false,
+			bind: "127.0.0.1",
+			port: 9611,
+			provider: "ollama",
+			endpoint: "http://127.0.0.1:11434",
+			model: "llama3.1:8b-instruct-q4",
+			max_tokens: 768,
+			temperature: 0.2,
+			allowLAN: false,
+			allowedLANs: ["10.0.4.0/24"],
+			redactLog: true,
+		})
+	}
+}
+
+function validateSupervisorConfig(cfg: any): SupervisorConfig {
+	if (cfg.bind === "0.0.0.0") throw new Error("0.0.0.0 is forbidden")
+	if (typeof cfg.port !== "number" || cfg.port < 9600 || cfg.port > 9699)
+		throw new Error("Port must be between 9600 and 9699")
+	return cfg as SupervisorConfig
+}
+
+async function validateAndWriteSupervisorConfig(payload: any): Promise<SupervisorConfig> {
+	const cfg = validateSupervisorConfig(payload)
+	const file = await getConfigPath()
+	await fs.mkdir(path.dirname(file), { recursive: true })
+	await fs.writeFile(file, JSON.stringify(cfg, null, 2), "utf8")
+	return cfg
 }

@@ -25,6 +25,7 @@ import {
 	Bot, // kilocode_change
 	MessageSquare,
 	Monitor,
+	Cpu, // kilocode_change
 	LucideIcon,
 	// SquareSlash, // kilocode_change
 	// Glasses, // kilocode_change
@@ -71,6 +72,7 @@ import { TerminalSettings } from "./TerminalSettings"
 import { ExperimentalSettings } from "./ExperimentalSettings"
 import { LanguageSettings } from "./LanguageSettings"
 import { About } from "./About"
+import LocalSupervisor from "./LocalSupervisor"
 import { Section } from "./Section"
 import PromptsSettings from "./PromptsSettings"
 import McpView from "../kilocodeMcp/McpView" // kilocode_change
@@ -106,6 +108,7 @@ const sectionNames = [
 	"experimental",
 	"language",
 	"mcp",
+	"localSupervisor",
 	"about",
 ] as const
 
@@ -648,6 +651,7 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone, t
 			{ id: "experimental", icon: FlaskConical },
 			{ id: "language", icon: Globe },
 			{ id: "mcp", icon: Server },
+			{ id: "localSupervisor", icon: Cpu },
 			{ id: "about", icon: Info },
 		],
 		[kiloCodeWrapperProperties?.kiloCodeWrapped], // kilocode_change
@@ -759,7 +763,9 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone, t
 											? t(`kilocode:settings.sections.mcp`)
 											: id === "ghost"
 												? t(`kilocode:ghost.title`)
-												: t(`settings:sections.${id}`)}
+												: id === "localSupervisor"
+													? "Local Supervisor"
+													: t(`settings:sections.${id}`)}
 									</span>
 								</div>
 							</TabTrigger>
@@ -780,7 +786,9 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone, t
 													? t(`kilocode:settings.sections.mcp`)
 													: id === "ghost"
 														? t(`kilocode:ghost.title`)
-														: t(`settings:sections.${id}`)}
+														: id === "localSupervisor"
+															? "Local Supervisor"
+															: t(`settings:sections.${id}`)}
 											</p>
 										</TooltipContent>
 									</Tooltip>
@@ -1033,6 +1041,9 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone, t
 					{/* kilocode_change */}
 					{/* MCP Section */}
 					{activeTab === "mcp" && <McpView />}
+
+					{/* Local Supervisor Section */}
+					{activeTab === "localSupervisor" && <LocalSupervisor />}
 
 					{/* About Section */}
 					{activeTab === "about" && (

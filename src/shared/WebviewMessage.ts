@@ -311,6 +311,9 @@ export interface WebviewMessage {
 		| "editQueuedMessage"
 		| "dismissUpsell"
 		| "getDismissedUpsells"
+		| "supervisor:get"
+		| "supervisor:set"
+		| "supervisorConfig"
 	text?: string
 	editedMessageContent?: string
 	tab?: "settings" | "history" | "mcp" | "modes" | "chat" | "marketplace" | "cloud"
@@ -406,7 +409,10 @@ export interface WebviewMessage {
 }
 
 // kilocode_change: Create discriminated union for type-safe messages
-export type MaybeTypedWebviewMessage = WebviewMessage | UpdateGlobalStateMessage
+export type MaybeTypedWebviewMessage =
+	| WebviewMessage
+	| UpdateGlobalStateMessage
+	| { type: "supervisorConfig"; config?: any; error?: string }
 
 // kilocode_change begin
 export type OrganizationRole = "owner" | "admin" | "member"
@@ -525,3 +531,4 @@ export type WebViewMessagePayload =
 	| InstallMarketplaceItemWithParametersPayload
 	| UpdateTodoListPayload
 	| EditQueuedMessagePayload
+	| { config?: any; error?: string } // supervisorConfig payload

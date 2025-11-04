@@ -112,6 +112,24 @@ Create `.kilocode/supervisor.config.json` in your project root:
 - **Configurable Policies**: Fine-grained control over auto-fix behavior
 - **Sandboxed Execution**: Service runs in isolated environment
 
+### Local Supervisor UI Integration
+
+The Local Supervisor configuration is accessible through **Settings → Local Supervisor** in the VS Code extension.
+
+**Security Policy:**
+
+- Default bind: **127.0.0.1**. **Forbidden**: `0.0.0.0`
+- Port range: **9600–9699** (default: **9611**)
+- No secrets in clear text within logs
+
+**Configuration File:**
+`.kilocode/supervisor.config.json` — persists options (enable, port, bind, provider, endpoint, model, tokens, temperature, allowLAN).
+
+**Usage:**
+
+- Toggle via **SV ON/OFF** button in chat toolbar (shortcut: `Ctrl+Alt+L`)
+- Settings changes are applied immediately via IPC
+
 ### Development
 
 For details on building and developing the extension, see [DEVELOPMENT.md](/DEVELOPMENT.md)
