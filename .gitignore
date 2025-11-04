@@ -92,3 +92,5 @@ kilocode-local-supervisor-kickstart-plan.md
 **/*secrets*.json
 **/mcp*/**/*.local.*
 **/mcp*/**/*config*.json
+merge-conflict-resolution-final-report.md
+packages/supervisor-service/test*

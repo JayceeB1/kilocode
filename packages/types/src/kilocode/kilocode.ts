@@ -95,7 +95,16 @@ function getGlobalKilocodeBackendUrl(): string {
  * In production: https://kilocode.ai
  */
 export function getAppUrl(path: string = ""): string {
-	return new URL(path, getGlobalKilocodeBackendUrl()).toString()
+	const baseUrl = getGlobalKilocodeBackendUrl()
+	// Remove trailing slash from base URL to avoid double slashes
+	const cleanBaseUrl = baseUrl.replace(/\/$/, "")
+	// If path is empty or just "/", return the base URL without trailing slash
+	if (!path || path === "/") {
+		return cleanBaseUrl
+	}
+	// Ensure path starts with a slash
+	const cleanPath = path.startsWith("/") ? path : `/${path}`
+	return `${cleanBaseUrl}${cleanPath}`
 }
 
 /**
