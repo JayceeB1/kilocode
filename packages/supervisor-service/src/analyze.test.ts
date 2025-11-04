@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, vi } from "vitest"
 import { Request, Response } from "express"
-import { analyzeCode, healthCheck } from "./analyze"
-import { resetConfig } from "./config"
+import { analyzeCode, healthCheck } from "./analyze.js"
+import { resetConfig } from "./config.js"
 
 // Mock Express Response
 const mockResponse = () => {

@@ -1,5 +1,5 @@
 import { Request, Response } from "express"
-import { getConfig } from "./config"
+import { getConfig } from "./config.js"
 
 export interface AnalyzeRequest {
 	code: string

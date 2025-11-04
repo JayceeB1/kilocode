@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest"
-import { loadConfig, getConfig, resetConfig } from "./config"
+import { loadConfig, getConfig, resetConfig } from "./config.js"
 import { writeFileSync, unlinkSync, existsSync } from "fs"
 import { join } from "path"
 

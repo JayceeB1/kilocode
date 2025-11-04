@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, vi } from "vitest"
-import { SupervisorService } from "./supervisorService"
+import { SupervisorService } from "./supervisorService.js"
 import axios from "axios"
 
 // Mock vscode

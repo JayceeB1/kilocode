@@ -1,5 +1,5 @@
 import * as vscode from "vscode"
-import { SupervisorService } from "./supervisorService"
+import { SupervisorService } from "./supervisorService.js"
 
 export interface TerminalCaptureConfig {
 	enabled: boolean

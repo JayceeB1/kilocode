@@ -1,7 +1,7 @@
 import * as vscode from "vscode"
-import { TerminalCapture } from "./terminal"
-import { ProblemMatcher } from "./problemMatcher"
-import { SupervisorService } from "./supervisorService"
+import { TerminalCapture } from "./terminal.js"
+import { ProblemMatcher } from "./problemMatcher.js"
+import { SupervisorService } from "./supervisorService.js"
 
 let terminalCapture: TerminalCapture
 let problemMatcher: ProblemMatcher
