@@ -1,0 +1,38 @@
+{
+  "bind": "127.0.0.1",
+  "port": 43110,
+  "provider": "ollama",
+  "model": "llama3.1:8b-instruct-q4",
+  "max_tokens": 768,
+  "temperature": 0.2,
+  "autoFixWhitelist": ["path_not_found", "missing_dep", "flaky_test_rerun"],
+  "autoFixMinConfidence": 0.75,
+  "reflexion": { 
+    "enabled": true, 
+    "maxItems": 128, 
+    "ttlDays": 60 
+  },
+  "security": {
+    "allowLan": false,
+    "requireAuthentication": false,
+    "maxRequestSize": "10MB",
+    "allowedPaths": ["/workspace"],
+    "blockedPaths": ["/etc", "/usr", "~/.ssh"]
+  },
+  "logging": {
+    "level": "info",
+    "file": ".kilocode/.logs/supervisor.log"
+  },
+  "providers": {
+    "ollama": {
+      "baseUrl": "http://127.0.0.1:11434",
+      "timeout": 30000,
+      "retryAttempts": 3
+    },
+    "llamacpp": {
+      "baseUrl": "http://127.0.0.1:8080",
+      "timeout": 30000,
+      "retryAttempts": 3
+    }
+  }
+}

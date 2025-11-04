@@ -66,12 +66,28 @@ qdrant_storage/
 # allow multiple local clones with different workspaces with different colors
 # to make it easier to work on features in parallel
 *.code-workspace
+
+# Local Supervisor configurations
 .kilocode/mcp.json
+.kilocode/supervisor.config.json
+.kilocode/**/.logs/
+.kilocode/**/secrets*.json
+.kilocode/**/local*.json
+
+# Environment files
+*.env*
+*.token
+
+# MCP configuration files
+.kilocode/mcp/*.toml
+.kilocode/mcp/*.json
+
+# Git directories (prevent nested git repos)
+**/.git/*
+
+# Additional local supervisor files
 kilo_code_local_supervisor_project_reference_v_0.md
 kilocode-local-supervisor-kickstart-plan.md
-
-.env
-.env.*
 **/config.local.*.json
 **/*secrets*.json
 **/mcp*/**/*.local.*

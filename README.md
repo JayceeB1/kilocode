@@ -190,4 +190,10 @@ Thanks to all the contributors who help make Kilo Code better!
   </tr>
 </table>
 
+## Local Supervisor (experimental)
+
+Kilo Code Local Supervisor provides on-device code analysis and auto-fix capabilities using local LLM models. It offers enhanced privacy and offline operation while maintaining the same powerful analysis features.
+
+For detailed documentation, see [README_SUPERVISOR.md](README_SUPERVISOR.md).
+
 <!-- END CONTRIBUTORS SECTION -->
