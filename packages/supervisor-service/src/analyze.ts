@@ -34,9 +34,10 @@ export async function analyzeCode(req: Request, res: Response): Promise<void> {
 	const startTime = Date.now()
 
 	try {
-		const { code }: AnalyzeRequest = req.body
+		const rawBody = (req as any)?.body ?? {}
+		const code = typeof rawBody.code === "string" ? rawBody.code : undefined
 
-		if (!code || typeof code !== "string") {
+		if (!code) {
 			res.status(400).json({
 				error: "Invalid request: code is required and must be a string",
 			})
