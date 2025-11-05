@@ -1,0 +1,7 @@
+{
+	"version": 1,
+	"createdAt": "2025-11-05T18:05:00.000Z",
+	"entries": [],
+	"limits": { "maxBytes": 1048576, "ttlDays": 30 },
+	"notes": "Local-first Reflexion memory store. No secrets."
+}

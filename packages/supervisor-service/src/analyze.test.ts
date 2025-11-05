@@ -1,7 +1,22 @@
 import { describe, test, expect, beforeEach, vi } from "vitest"
 import { Request, Response } from "express"
 import { analyzeCode, healthCheck } from "./analyze.js"
-import { resetConfig } from "./config.js"
+
+vi.mock("./config.js", () => ({
+	loadConfig: vi.fn(),
+	getConfig: vi.fn().mockReturnValue({
+		bind: "127.0.0.1",
+		port: 9611,
+		provider: "ollama",
+		model: "llama3.1:8b-instruct-q4",
+		max_tokens: 768,
+		temperature: 0.2,
+		autoFixWhitelist: ["path_not_found", "missing_dep", "flaky_test_rerun"],
+		autoFixMinConfidence: 0.75,
+		reflexion: { enabled: true, maxItems: 128, ttlDays: 60 },
+	}),
+	resetConfig: vi.fn(),
+}))
 
 // Mock Express Response
 const mockResponse = () => {
@@ -13,12 +28,11 @@ const mockResponse = () => {
 
 describe("analyze", () => {
 	beforeEach(() => {
-		resetConfig()
 		vi.clearAllMocks()
 	})
 
 	test("should return 400 for missing code", async () => {
-		const req = {} as Request
+		const req = { body: {} } as Request
 		const res = mockResponse()
 
 		await analyzeCode(req, res)
@@ -74,12 +88,10 @@ describe("analyze", () => {
 	})
 
 	test("should handle analysis errors gracefully", async () => {
-		// Mock config to throw error
-		vi.mock("./config", () => ({
-			getConfig: vi.fn().mockImplementation(() => {
-				throw new Error("Config error")
-			}),
-		}))
+		const { getConfig } = await import("./config.js")
+		vi.mocked(getConfig).mockImplementationOnce(() => {
+			throw new Error("Config error")
+		})
 
 		const req = {
 			body: { code: "valid code" },
@@ -99,7 +111,6 @@ describe("analyze", () => {
 
 describe("healthCheck", () => {
 	beforeEach(() => {
-		resetConfig()
 		vi.clearAllMocks()
 	})
 
@@ -126,12 +137,10 @@ describe("healthCheck", () => {
 	})
 
 	test("should return unhealthy status on error", async () => {
-		// Mock config to throw error
-		vi.mock("./config", () => ({
-			getConfig: vi.fn().mockImplementation(() => {
-				throw new Error("Config error")
-			}),
-		}))
+		const { getConfig } = await import("./config.js")
+		vi.mocked(getConfig).mockImplementationOnce(() => {
+			throw new Error("Config error")
+		})
 
 		const req = {} as Request
 		const res = mockResponse()

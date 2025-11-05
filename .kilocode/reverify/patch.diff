@@ -1,0 +1,56 @@
+--- a/packages/supervisor-service/src/analyze.test.ts
++++ b/packages/supervisor-service/src/analyze.test.ts
+@@ -1,10 +1,20 @@
+ import { describe, test, expect, beforeEach, vi } from "vitest"
+ import { Request, Response } from "express"
+ import { analyzeCode, healthCheck } from "./analyze.js"
+ 
++const mockResetConfig = vi.fn()
++const mockGetConfig = vi.fn().mockReturnValue({
++  bind: "127.0.0.1",
++  port: 9611,
++  provider: "ollama",
++  model: "llama3.1:8b-instruct-q4",
++  max_tokens: 768,
++  temperature: 0.2,
++  autoFixWhitelist: ["path_not_found", "missing_dep", "flaky_test_rerun"],
++  autoFixMinConfidence: 0.75,
++  reflexion: { enabled: true, maxItems: 128, ttlDays: 60 }
++})
++
+ vi.mock("./config.js", () => ({
+-  loadConfig: vi.fn(),
+-  getConfig: vi.fn(),
+-  resetConfig: vi.fn()
++  loadConfig: vi.fn(),
++  getConfig: mockGetConfig,
++  resetConfig: mockResetConfig
+ }))
+ 
+ // Mock Express Response
+@@ -22,7 +32,7 @@
+ describe("analyze", () => {
+ 	beforeEach(() => {
+-		resetConfig()
++		mockResetConfig()
+ 		vi.clearAllMocks()
+ 	})
+ 
+@@ -108,7 +118,7 @@
+ describe("healthCheck", () => {
+ 	beforeEach(() => {
+-		resetConfig()
++		mockResetConfig()
+ 		vi.clearAllMocks()
+ 	})
+ 
+--- /dev/null
++++ b/.kilocode/supervisor_memory.json
+@@ -0,0 +1,7 @@
++{
++ "version":1,
++ "createdAt":"2025-11-05T18:05:00.000Z",
++ "entries":[],
++ "limits":{"maxBytes":1048576,"ttlDays":30},
++ "notes":"Local-first Reflexion memory store. No secrets."
++}

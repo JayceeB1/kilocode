@@ -1,0 +1,173 @@
+{
+	"features_expected": [
+		{
+			"id": "devcontainer",
+			"source": "docs/code",
+			"desc": "Dev Container & workspace ready",
+			"files": [".devcontainer/devcontainer.json", "package.json"],
+			"status": "ok"
+		},
+		{
+			"id": "security-localfirst",
+			"source": "docs/code",
+			"desc": "Security: localhost bind + redactions",
+			"files": [".kilocode/supervisor.config.json"],
+			"status": "ok"
+		},
+		{
+			"id": "supervisor-service",
+			"source": "docs/code",
+			"desc": "Supervisor API /v1/analyze + tests stables",
+			"files": ["packages/supervisor-service", "packages/supervisor-service/tsconfig.json"],
+			"status": "broken"
+		},
+		{
+			"id": "sidecar-extension",
+			"source": "docs/code",
+			"desc": "VS Code sidecar wiring",
+			"files": ["packages/supervisor-sidecar", ".vscode/tasks.json", ".vscode/launch.json"],
+			"status": "ok"
+		},
+		{
+			"id": "contracts",
+			"source": "docs/code",
+			"desc": "ErrorReport/RemediationPlan présents",
+			"files": ["**/*.md", "**/*.ts", "**/*.json"],
+			"status": "ok"
+		},
+		{
+			"id": "llm-connectors",
+			"source": "docs/code",
+			"desc": "Connecteurs locaux Ollama/llama.cpp/LM Studio",
+			"files": ["packages/types/src/providers/ollama.ts", "packages/types/src/providers/lm-studio.ts"],
+			"status": "ok"
+		},
+		{
+			"id": "policy-autofix",
+			"source": "docs/code",
+			"desc": "Seuils et whitelist auto-fix",
+			"files": [".kilocode/supervisor.config.json"],
+			"status": "ok"
+		},
+		{
+			"id": "reflexion",
+			"source": "docs/code",
+			"desc": "Reflexion memory on-disk",
+			"files": [".kilocode/supervisor_memory.json"],
+			"status": "missing"
+		},
+		{
+			"id": "scripts-workspace",
+			"source": "docs/code",
+			"desc": "Scripts monorepo OK",
+			"files": ["**/package.json"],
+			"status": "broken"
+		},
+		{
+			"id": "ci-pr",
+			"source": "docs/code",
+			"desc": "PR template + CI de base",
+			"files": [".github/PULL_REQUEST_TEMPLATE.md", ".github/workflows/code-qa.yml"],
+			"status": "ok"
+		},
+		{
+			"id": "packaging-vsix",
+			"source": "docs/code",
+			"desc": "VSIX buildable",
+			"files": ["bin/kilo-code-4.115.0.vsix"],
+			"status": "ok"
+		},
+		{
+			"id": "mcp-optional",
+			"source": "docs/code",
+			"desc": "MCP: erreurs journalisées en ErrorReport",
+			"files": [".kilocode/mcp.json", "packages/types/src/mcp.ts"],
+			"status": "ok"
+		}
+	],
+	"scripts": [
+		{
+			"pkg": "packages/supervisor-service",
+			"name": "build",
+			"exists": true,
+			"probe": "--help",
+			"status": "ok",
+			"stderr_excerpt": ""
+		},
+		{
+			"pkg": "packages/supervisor-service",
+			"name": "test",
+			"exists": true,
+			"probe": "--reporter=verbose",
+			"status": "broken",
+			"stderr_excerpt": "TypeError: resetConfig is not a function"
+		},
+		{
+			"pkg": "packages/supervisor-sidecar",
+			"name": "build",
+			"exists": true,
+			"probe": "--help",
+			"status": "ok",
+			"stderr_excerpt": ""
+		},
+		{
+			"pkg": "packages/supervisor-sidecar",
+			"name": "test",
+			"exists": true,
+			"probe": "--reporter=verbose",
+			"status": "ok",
+			"stderr_excerpt": ""
+		},
+		{ "pkg": "workspace", "name": "lint", "exists": true, "probe": "--help", "status": "ok", "stderr_excerpt": "" },
+		{
+			"pkg": "workspace",
+			"name": "check-types",
+			"exists": true,
+			"probe": "--help",
+			"status": "ok",
+			"stderr_excerpt": ""
+		},
+		{
+			"pkg": "workspace",
+			"name": "build",
+			"exists": true,
+			"probe": "--help",
+			"status": "ok",
+			"stderr_excerpt": ""
+		},
+		{
+			"pkg": "workspace",
+			"name": "test",
+			"exists": true,
+			"probe": "--reporter=verbose",
+			"status": "broken",
+			"stderr_excerpt": "6 tests failed"
+		}
+	],
+	"typecheck": { "tsconfig": "packages/supervisor-service/tsconfig.json", "noEmit": true, "errors": [] },
+	"lint": { "errors": [], "warnings": [] },
+	"tests": {
+		"total": 152,
+		"passed": 146,
+		"failed": [
+			{
+				"name": "analyze.test.ts",
+				"pkg": "packages/supervisor-service",
+				"log_excerpt": "TypeError: resetConfig is not a function"
+			}
+		]
+	},
+	"build": {
+		"workspaces": [
+			{ "pkg": "packages/supervisor-service", "status": "ok", "log_excerpt": "" },
+			{ "pkg": "packages/supervisor-sidecar", "status": "ok", "log_excerpt": "" },
+			{ "pkg": "workspace", "status": "ok", "log_excerpt": "VSIX generated: bin/kilo-code-4.115.0.vsix" }
+		]
+	},
+	"security": { "binds": ["127.0.0.1:9611"], "denied_bind": ["0.0.0.0"], "secrets_redacted": true },
+	"recommendations": [
+		"Corriger les mocks dans supervisor-service/src/analyze.test.ts",
+		"Créer .kilocode/supervisor_memory.json pour la réflexion",
+		"Isoler les tests pour éviter les failures en cascade"
+	]
+}
