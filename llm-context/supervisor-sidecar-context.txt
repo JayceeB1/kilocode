@@ -1,0 +1,776 @@
+# Context digest for packages/supervisor-sidecar# Files considered: 10# Max chars per file: 4000# Max chars per digest: 160000===== eslint.config.js =====
+import { config } from "@roo-code/config-eslint/base"
+
+export default [
+	...config,
+	{
+		rules: {
+			"@typescript-eslint/explicit-function-return-type": "off",
+			"@typescript-eslint/explicit-module-boundary-types": "off",
+			"@typescript-eslint/no-explicit-any": "warn",
+			"@typescript-eslint/no-non-null-assertion": "warn",
+		},
+	},
+	{
+		ignores: ["build/**", "out/**", "coverage/**", "**/*.js", "!**/*.cjs"],
+	},
+]
+
+===== package.json =====
+{
+	"name": "@roo-code/supervisor-sidecar",
+	"description": "KiloCode Local Supervisor Sidecar - VS Code extension for terminal capture and problem matching",
+	"version": "0.0.0",
+	"type": "module",
+	"main": "./dist/index.js",
+	"exports": "./src/index.ts",
+	"scripts": {
+		"lint": "eslint src --ext=ts --max-warnings=0",
+		"check-types": "tsc --noEmit",
+		"test": "vitest run",
+		"build": "tsup",
+		"dev": "tsx watch src/index.ts",
+		"clean": "rimraf dist .turbo"
+	},
+	"dependencies": {
+		"@roo-code/types": "workspace:^",
+		"axios": "^1.12.0",
+		"zod": "^3.25.61"
+	},
+	"devDependencies": {
+		"@roo-code/config-eslint": "workspace:^",
+		"@roo-code/config-typescript": "workspace:^",
+		"@types/node": "^24.1.0",
+		"@types/vscode": "^1.84.0",
+		"tsup": "^8.3.5",
+		"tsx": "^4.19.3",
+		"vitest": "^3.2.3"
+	},
+	"contributes": {
+		"commands": [
+			{
+				"command": "kilo-code.supervisor.toggleCapture",
+				"title": "Toggle Supervisor Terminal Capture",
+				"category": "KiloCode Supervisor"
+			},
+			{
+				"command": "kilo-code.supervisor.analyzeCurrentFile",
+				"title": "Analyze Current File with Supervisor",
+				"category": "KiloCode Supervisor"
+			},
+			{
+				"command": "kilo-code.supervisor.showProblems",
+				"title": "Show Supervisor Problems",
+				"category": "KiloCode Supervisor"
+			}
+		],
+		"configuration": {
+			"title": "KiloCode Supervisor",
+			"properties": {
+				"kilo-code.supervisor.enabled": {
+					"type": "boolean",
+					"default": true,
+					"description": "Enable KiloCode Supervisor terminal capture and analysis"
+				},
+				"kilo-code.supervisor.serviceUrl": {
+					"type": "string",
+					"default": "http://127.0.0.1:43110",
+					"description": "URL of the KiloCode Supervisor service"
+				},
+				"kilo-code.supervisor.autoAnalyze": {
+					"type": "boolean",
+					"default": true,
+					"description": "Automatically analyze terminal output for issues"
+				},
+				"kilo-code.supervisor.captureCommands": {
+					"type": "array",
+					"default": [
+						"npm test",
+						"pnpm test",
+						"yarn test",
+						"make test"
+					],
+					"description": "Commands that trigger supervisor analysis"
+				}
+			}
+		}
+	}
+}
+
+===== tsconfig.json =====
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"outDir": "./dist",
+		"rootDir": "./src",
+		"types": ["node", "vscode"],
+		"incremental": false
+	},
+	"include": ["src/**/*"],
+	"exclude": ["node_modules", "dist", "**/*.test.ts", "**/*.spec.ts"]
+}
+
+===== tsup.config.ts =====
+import { defineConfig } from "tsup"
+
+export default defineConfig({
+	entry: ["src/index.ts"],
+	format: ["cjs"],
+	dts: { only: true },
+	clean: true,
+	sourcemap: true,
+})
+
+===== vitest.config.ts =====
+import { defineConfig } from "vitest/config"
+
+export default defineConfig({
+	test: {
+		globals: true,
+		environment: "node",
+		include: ["src/**/*.test.ts", "src/**/*.spec.ts"],
+		exclude: ["node_modules", "dist"],
+	},
+})
+
+===== src/index.ts =====
+import * as vscode from "vscode"
+import { TerminalCapture } from "./terminal.js"
+import { ProblemMatcher } from "./problemMatcher.js"
+import { SupervisorService } from "./supervisorService.js"
+
+let terminalCapture: TerminalCapture
+let problemMatcher: ProblemMatcher
+let supervisorService: SupervisorService
+let outputChannel: vscode.OutputChannel
+
+export function activate(context: vscode.ExtensionContext) {
+	console.log("KiloCode Supervisor Sidecar extension is now active!")
+
+	// Create output channel for logging
+	outputChannel = vscode.window.createOutputChannel("KiloCode Supervisor")
+
+	// Initialize services
+	supervisorService = new SupervisorService()
+	terminalCapture = new TerminalCapture(supervisorService, outputChannel)
+	problemMatcher = new ProblemMatcher(outputChannel)
+
+	// Register commands
+	const toggleCaptureCommand = vscode.commands.registerCommand("kilo-code.supervisor.toggleCapture", () =>
+		terminalCapture.toggleCapture(),
+	)
+
+	const analyzeCurrentFileCommand = vscode.commands.registerCommand("kilo-code.supervisor.analyzeCurrentFile", () =>
+		analyzeCurrentFile(),
+	)
+
+	const showProblemsCommand = vscode.commands.registerCommand("kilo-code.supervisor.showProblems", () =>
+		problemMatcher.showProblems(),
+	)
+
+	// Register disposables
+	context.subscriptions.push(
+		toggleCaptureCommand,
+		analyzeCurrentFileCommand,
+		showProblemsCommand,
+		terminalCapture,
+		problemMatcher,
+		outputChannel,
+	)
+
+	// Check if supervisor service is available
+	checkSupervisorService()
+
+	outputChannel.appendLine("KiloCode Supervisor Sidecar activated successfully")
+}
+
+async function analyzeCurrentFile(): Promise<void> {
+	const editor = vscode.window.activeTextEditor
+	if (!editor) {
+		vscode.window.showWarningMessage("No active file to analyze")
+		return
+	}
+
+	const document = editor.document
+	const content = document.getText()
+	const language = document.languageId
+	const filePath = document.fileName
+
+	try {
+		outputChannel.appendLine(`Analyzing file: ${filePath}`)
+
+		const result = await supervisorService.analyzeCode({
+			code: content,
+			language,
+			filePath,
+			context: "Manual analysis from VS Code",
+		})
+
+		// Process and display results
+		problemMatcher.processAnalysisResult(result, filePath)
+
+		vscode.window.showInformationMessage(`Analysis complete. Found ${result.analysis.issues.length} issues.`)
+	} catch (error) {
+		outputChannel.appendLine(`Analysis failed: ${error}`)
+		vscode.window.showErrorMessage(`Analysis failed: ${error}`)
+	}
+}
+
+async function checkSupervisorService(): Promise<void> {
+	try {
+		const isHealthy = await supervisorService.healthCheck()
+		if (isHealthy) {
+			outputChannel.appendLine("Supervisor service is healthy and accessible")
+		} else {
+			outputChannel.appendLine("Supervisor service is not responding")
+			vscode.window.showWarningMessage(
+				"KiloCode Supervisor service is not running. Start it to enable analysis features.",
+			)
+		}
+	} catch (error) {
+		outputChannel.appendLine(`Failed to check supervisor service: ${error}`)
+		vscode.window.showWarningMessage("Cannot connect to KiloCode Supervisor service. Check your configuration.")
+	}
+}
+
+export function deactivate() {
+	outputChannel.appendLine("KiloCode Supervisor Sidecar deactivated")
+	outputChannel.dispose()
+}
+
+===== src/problemMatcher.ts =====
+import * as vscode from "vscode"
+
+export interface SupervisorIssue {
+	type: string
+	severity: "error" | "warning" | "info"
+	message: string
+	line?: number
+	column?: number
+	suggestion?: string
+	confidence?: number
+	filePath?: string
+}
+
+export interface AnalysisResult {
+	analysis: {
+		issues: SupervisorIssue[]
+		suggestions: string[]
+		fixedCode?: string
+	}
+	metadata: {
+		model: string
+		provider: string
+		tokensUsed?: number
+		processingTime: number
+	}
+}
+
+export class ProblemMatcher implements vscode.Disposable {
+	private diagnosticCollection: vscode.DiagnosticCollection
+	private issues: SupervisorIssue[] = []
+
+	constructor(private outputChannel: vscode.OutputChannel) {
+		this.diagnosticCollection = vscode.languages.createDiagnosticCollection("kilocode-supervisor")
+	}
+
+	public processAnalysisResult(result: AnalysisResult, filePath?: string): void {
+		const issues = result.analysis.issues
+
+		if (issues.length === 0) {
+			this.outputChannel.appendLine("No issues found in analysis")
+			return
+		}
+
+		this.outputChannel.appendLine(`Processing ${issues.length} issues from analysis`)
+
+		// Store issues for later viewing
+		this.issues = issues.map((issue) => ({
+			...issue,
+			filePath: filePath || issue.filePath || "",
+		}))
+
+		// Convert to VS Code diagnostics
+		const diagnostics = this.convertToDiagnostics(issues, filePath)
+
+		// Apply diagnostics to the appropriate file
+		if (filePath) {
+			const uri = vscode.Uri.file(filePath)
+			this.diagnosticCollection.set(uri, diagnostics)
+		} else {
+			// If no specific file, try to apply to active editor
+			const activeEditor = vscode.window.activeTextEditor
+			if (activeEditor) {
+				this.diagnosticCollection.set(activeEditor.document.uri, diagnostics)
+			}
+		}
+
+		// Log summary
+		this.logAnalysisSummary(result)
+	}
+
+	private convertToDiagnostics(issues: SupervisorIssue[], filePath?: string): vscode.Diagnostic[] {
+		return issues.map((issue) => {
+			const diagnostic = new vscode.Diagnostic(
+				this.getRange(issue),
+				issue.message,
+				this.getSeverity(issue.severity),
+			)
+
+			diagnostic.source = "KiloCode Supervisor"
+			diagnostic.code = issue.type
+
+			if (issue.suggestion) {
+				diagnostic.relatedInformation = [
+					new vscode.DiagnosticRelatedInformation(
+						new vscode.Location(vscode.Uri.file(filePath || ""), this.getRange(issue)),
+						`Suggestion: ${issue.suggestion}`,
+					),
+				]
+			}
+
+			return diagnostic
+		})
+	}
+
+	private getRange(issue: SupervisorIssue): vscode.Range {
+		if (issue.line !== undefined) {
+			const line = Math.max(0, issue.line - 1) // Convert to 0-based
+			const column = issue.column ? Math.max(0, issue.column - 1) : 0
+
+			return new vscode.Range(new vscode.Position(line, column), new vscode.Position(line, column + 1))
+		}
+
+		// Default to beginning of document
+		return new vscode.Range(new vscode.Position(0, 0), new vscode.Position(0, 1))
+	}
+
+	private getSeverity(severity: string): vscode.DiagnosticSeverity {
+		switch (severity) {
+			case "error":
+				return vscode.DiagnosticSeverity.Error
+			case "warning":
+				return vscode.DiagnosticSeverity.Warning
+			case "info":
+			default:
+				return vscode.DiagnosticSeverity.Information
+		}
+	}
+
+	private logAnalysisSummary(result: AnalysisResult): void {
+		const { issues, suggestions } = result.analysis
+		const { model, provider, tokensUsed, processingTime } = result.metadata
+
+		this.outputChannel.appendLine("\n=== Analysis Summary ===")
+		this.outputChannel.appendLine(`Model: ${provider}/${model}`)
+		this.outputChannel.appendLine(`Issues found: ${issues.length}`)
+		this.outputChannel.appendLine(`Suggestions: ${suggestions.length}`)
+
+		if (tokensUsed) {
+			this.outputChannel.appendLine(`Tokens used: ${tokensUsed}`)
+		}
+
+		this.outputChannel.appendLine(`Processing time: ${processingTime}ms`)
+
+		// Log issues by severity
+		const errorCount = issues.filter((i) => i.severity === "error").length
+		const warningCount = issues.filter((i) => i.severity === "warning").length
+		const infoCount = issues.filter((i) => i.sever
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== src/supervisorService.test.ts =====
+import { describe, test, expect, beforeEach, vi } from "vitest"
+import { SupervisorService } from "./supervisorService.js"
+import axios from "axios"
+
+// Mock vscode
+vi.mock("vscode", () => ({
+	workspace: {
+		getConfiguration: vi.fn(() => ({
+			get: vi.fn((key: string, defaultValue: unknown) => {
+				if (key === "serviceUrl") return "http://localhost:43110"
+				return defaultValue
+			}),
+		})),
+		onDidChangeConfiguration: vi.fn(),
+	},
+}))
+
+// Mock axios
+vi.mock("axios", () => ({
+	default: {
+		create: vi.fn(),
+		get: vi.fn(),
+		post: vi.fn(),
+		put: vi.fn(),
+		delete: vi.fn(),
+		patch: vi.fn(),
+		head: vi.fn(),
+		options: vi.fn(),
+		request: vi.fn(),
+		getUri: vi.fn(),
+		interceptors: {
+			request: { use: vi.fn(), eject: vi.fn(), clear: vi.fn() },
+			response: { use: vi.fn(), eject: vi.fn(), clear: vi.fn() },
+		},
+		defaults: {},
+		isAxiosError: vi.fn(),
+	},
+}))
+
+describe("SupervisorService", () => {
+	let service: SupervisorService
+
+	beforeEach(() => {
+		vi.clearAllMocks()
+		service = new SupervisorService()
+	})
+
+	test("should initialize with correct service URL", () => {
+		expect(service["serviceUrl"]).toBe("http://localhost:43110")
+	})
+
+	test("should test connection successfully", async () => {
+		const mockAxios = vi.mocked(axios) as unknown as {
+			create: ReturnType<typeof vi.fn>
+		}
+
+		mockAxios.create.mockReturnValue({
+			get: vi.fn().mockResolvedValue({
+				data: {
+					status: "healthy",
+					service: "kilocode-supervisor-service",
+					version: "0.0.0",
+					config: {
+						provider: "ollama",
+						model: "llama3.1:8b-instruct-q4",
+						bind: "127.0.0.1",
+						port: 43110,
+					},
+				},
+			}),
+		})
+
+		const newService = new SupervisorService()
+		const result = await newService.testConnection()
+
+		expect(result.success).toBe(true)
+		expect(result.message).toContain("Connected to kilocode-supervisor-service")
+	})
+
+	test("should handle connection failure", async () => {
+		const mockAxios = vi.mocked(axios) as unknown as {
+			create: ReturnType<typeof vi.fn>
+		}
+
+		// Create a mock error with the code property
+		const mockError = new Error("Connection refused") as Error & { code: string }
+		mockError.code = "ECONNREFUSED"
+
+		// Mock the client.get method to throw the error directly
+		const mockGet = vi.fn().mockRejectedValue(mockError)
+
+		mockAxios.create.mockReturnValue({
+			get: mockGet,
+		})
+
+		// Mock isAxiosError to return true for our error
+		const mockAxiosFull = vi.mocked(axios) as unknown as {
+			isAxiosError: ReturnType<typeof vi.fn>
+		}
+		mockAxiosFull.isAxiosError.mockReturnValue(true)
+
+		const newService = new SupervisorService()
+
+		// Access the private client property to directly mock its get method
+		const client = (newService as unknown as { client: { get: ReturnType<typeof vi.fn> } }).client
+		client.get = mockGet
+
+		const result = await newService.testConnection()
+
+		expect(result.success).toBe(false)
+		expect(result.message).toContain("Failed to get service info")
+	})
+})
+
+===== src/supervisorService.ts =====
+import axios, { AxiosInstance, AxiosResponse } from "axios"
+import * as vscode from "vscode"
+
+export interface AnalyzeRequest {
+	code: string
+	language?: string
+	filePath?: string
+	context?: string
+}
+
+export interface AnalyzeResponse {
+	analysis: {
+		issues: Array<{
+			type: string
+			severity: "error" | "warning" | "info"
+			message: string
+			line?: number
+			column?: number
+			suggestion?: string
+			confidence?: number
+		}>
+		suggestions: string[]
+		fixedCode?: string
+	}
+	metadata: {
+		model: string
+		provider: string
+		tokensUsed?: number
+		processingTime: number
+	}
+}
+
+export interface HealthResponse {
+	status: string
+	service: string
+	version: string
+	config: {
+		provider: string
+		model: string
+		bind: string
+		port: number
+	}
+}
+
+export class SupervisorService {
+	private client: AxiosInstance
+	private serviceUrl: string
+
+	constructor() {
+		this.serviceUrl = this.loadServiceUrl()
+		this.client = axios.create({
+			baseURL: this.serviceUrl,
+			timeout: 30000, // 30 seconds timeout
+			headers: {
+				"Content-Type": "application/json",
+				"User-Agent": "kilocode-supervisor-sidecar/0.0.0",
+			},
+		})
+
+		this.setupConfigWatcher()
+	}
+
+	private loadServiceUrl(): string {
+		const config = vscode.workspace.getConfiguration("kilo-code.supervisor")
+		return config.get<string>("serviceUrl", "http://127.0.0.1:43110")
+	}
+
+	private setupConfigWatcher(): void {
+		vscode.workspace.onDidChangeConfiguration((event) => {
+			if (event.affectsConfiguration("kilo-code.supervisor.serviceUrl")) {
+				const newUrl = this.loadServiceUrl()
+				if (newUrl !== this.serviceUrl) {
+					this.serviceUrl = newUrl
+					this.client.defaults.baseURL = newUrl
+				}
+			}
+		})
+	}
+
+	public async analyzeCode(request: AnalyzeRequest): Promise<AnalyzeResponse> {
+		try {
+			const response: AxiosResponse<AnalyzeResponse> = await this.client.post("/v1/analyze", request)
+			return response.data
+		} catch (error) {
+			if (axios.isAxiosError(error)) {
+				const message = error.response?.data?.error || error.message
+				throw new Error(`Supervisor service error: ${message}`)
+			}
+			throw error
+		}
+	}
+
+	public async healthCheck(): Promise<boolean> {
+		try {
+			const response: AxiosResponse<HealthResponse> = await this.client.get("/health")
+			return response.data.status === "healthy"
+		} catch (_error) {
+			return false
+		}
+	}
+
+	public async getServiceInfo(): Promise<HealthResponse | null> {
+		try {
+			const response: AxiosResponse<HealthResponse> = await this.client.get("/health")
+			return response.data
+		} catch (_error) {
+			return null
+		}
+	}
+
+	public async testConnection(): Promise<{ success: boolean; message: string }> {
+		try {
+			const info = await this.getServiceInfo()
+			if (info) {
+				return {
+					success: true,
+					message: `Connected to ${info.service} v${info.version} using ${info.config.provider}/${info.config.model}`,
+				}
+			} else {
+				return {
+					success: false,
+					message: "Failed to get service info",
+				}
+			}
+		} catch (error) {
+			if (axios.isAxiosError(error)) {
+				if (error.code === "ECONNREFUSED") {
+					return {
+						success: false,
+						message: "Connection refused. Is the supervisor service running?",
+					}
+				} else if (error.code === "ENOTFOUND") {
+					return {
+						success: false,
+						message: "Service not found. Check the service URL configuration.",
+					}
+				} else {
+					return {
+						success: false,
+						message: `Network error: ${error.message}`,
+					}
+				}
+			}
+
+			return {
+				success: false,
+				message: `Unknown error: ${error instanceof Error ? error.message : "Unknown error"}`,
+			}
+		}
+	}
+}
+
+===== src/terminal.ts =====
+import * as vscode from "vscode"
+import { SupervisorService } from "./supervisorService.js"
+
+export interface TerminalCaptureConfig {
+	enabled: boolean
+	captureCommands: string[]
+	autoAnalyze: boolean
+}
+
+export class TerminalCapture implements vscode.Disposable {
+	private disposables: vscode.Disposable[] = []
+	private isCapturing = false
+	private config: TerminalCaptureConfig
+	private terminalData: Map<string, string[]> = new Map()
+
+	constructor(
+		private supervisorService: SupervisorService,
+		private outputChannel: vscode.OutputChannel,
+	) {
+		this.config = this.loadConfig()
+		this.setupEventListeners()
+		this.setupConfigWatcher()
+	}
+
+	private loadConfig(): TerminalCaptureConfig {
+		const config = vscode.workspace.getConfiguration("kilo-code.supervisor")
+		return {
+			enabled: config.get<boolean>("enabled", true),
+			captureCommands: config.get<string[]>("captureCommands", [
+				"npm test",
+				"pnpm test",
+				"yarn test",
+				"make test",
+			]),
+			autoAnalyze: config.get<boolean>("autoAnalyze", true),
+		}
+	}
+
+	private setupEventListeners(): void {
+		// Listen for terminal creation
+		const terminalCreationDisposable = vscode.window.onDidOpenTerminal((terminal) => {
+			this.setupTerminalCapture(terminal)
+		})
+
+		// Listen for terminal execution
+		// Note: onDidExecuteTerminalCommand is not available in current VS Code API
+		// This will need to be implemented differently when the API is available
+		// const terminalExecutionDisposable = vscode.window.onDidExecuteTerminalCommand(async (event) => {
+		//   await this.handleTerminalExecution(event);
+		// });
+		const terminalExecutionDisposable = new vscode.Disposable(() => {})
+
+		this.disposables.push(terminalCreationDisposable, terminalExecutionDisposable)
+	}
+
+	private setupConfigWatcher(): void {
+		const configWatcher = vscode.workspace.onDidChangeConfiguration((event) => {
+			if (event.affectsConfiguration("kilo-code.supervisor")) {
+				this.config = this.loadConfig()
+				this.outputChannel.appendLine("Supervisor configuration updated")
+			}
+		})
+
+		this.disposables.push(configWatcher)
+	}
+
+	private setupTerminalCapture(terminal: vscode.Terminal): void {
+		if (!this.config.enabled) {
+			return
+		}
+
+		const terminalName = terminal.name
+		this.terminalData.set(terminalName, [])
+
+		// Listen for terminal data
+		// Note: onDidWriteData is not available in current VS Code API
+		// This will need to be implemented differently when the API is available
+		// const dataDisposable = terminal.onDidWriteData((data) => {
+		//   this.captureTerminalData(terminalName, data);
+		// });
+		const dataDisposable = new vscode.Disposable(() => {})
+
+		const closeDisposable = vscode.window.onDidCloseTerminal((closedTerminal) => {
+			if (closedTerminal.name === terminalName) {
+				this.terminalData.delete(terminalName)
+				dataDisposable.dispose()
+			}
+		})
+
+		this.disposables.push(dataDisposable, closeDisposable)
+	}
+
+	private captureTerminalData(terminalName: string, data: string): void {
+		if (!this.isCapturing) {
+			return
+		}
+
+		const terminalOutput = this.terminalData.get(terminalName) || []
+		terminalOutput.push(data)
+		this.terminalData.set(terminalName, terminalOutput)
+	}
+
+	private async handleTerminalExecution(event: { execution: { commandLine: { value: string } } }): Promise<void> {
+		if (!this.config.enabled || !this.config.autoAnalyze) {
+			return
+		}
+
+		const command = event.execution.commandLine.value
+		const shouldCapture = this.config.captureCommands.some((captureCommand) => command.includes(captureCommand))
+
+		if (shouldCapture) {
+			this.outputChannel.appendLine(`Capturing terminal execution: ${command}`)
+			this.isCapturing = true
+
+			// Wait for command to complete, then analyze output
+			// Note: This API is not available yet, will need to be implemented differently
+			// event.execution.read().then(async (result) => {
+			//   if (result.exitCode !== 0) {
+			//     await this.analyzeTerminalOutput(command, result.exitCode);
+			//   }
+			//   this.isCapturing = false;
+			// });
+	
+…[truncated]
+# note: truncated to stay within per-file budget
+

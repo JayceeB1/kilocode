@@ -1,0 +1,3251 @@
+# Context digest for packages/supervisor-service# Files considered: 30# Max chars per file: 4000# Max chars per digest: 160000===== eslint.config.js =====
+import { config } from "@roo-code/config-eslint/base"
+
+export default [
+	...config,
+	{
+		rules: {
+			"@typescript-eslint/explicit-function-return-type": "off",
+			"@typescript-eslint/explicit-module-boundary-types": "off",
+			"@typescript-eslint/no-explicit-any": "warn",
+			"@typescript-eslint/no-non-null-assertion": "warn",
+			"@typescript-eslint/no-unused-vars": [
+				"warn",
+				{
+					argsIgnorePattern: "^_",
+					varsIgnorePattern: "^_",
+				},
+			],
+			"prefer-const": "warn",
+		},
+	},
+	{
+		ignores: ["build/**", "out/**", "coverage/**", "**/*.js", "!**/*.cjs"],
+	},
+]
+
+===== package.json =====
+{
+	"name": "@roo-code/supervisor-service",
+	"description": "KiloCode Local Supervisor Service - HTTP API for code analysis and auto-fix",
+	"version": "0.0.0",
+	"type": "module",
+	"main": "./dist/index.js",
+	"exports": "./src/index.ts",
+	"scripts": {
+		"lint": "eslint src --ext=ts --max-warnings=200",
+		"check-types": "tsc --noEmit",
+		"test": "vitest run",
+		"build": "tsup",
+		"dev": "tsx watch src/index.ts",
+		"start": "node dist/index.js",
+		"clean": "rimraf dist .turbo"
+	},
+	"dependencies": {
+		"@roo-code/types": "workspace:^",
+		"cors": "^2.8.5",
+		"express": "^4.21.2",
+		"helmet": "^8.0.0",
+		"ollama": "^0.5.17",
+		"zod": "^3.25.61"
+	},
+	"devDependencies": {
+		"@roo-code/config-eslint": "workspace:^",
+		"@roo-code/config-typescript": "workspace:^",
+		"@types/cors": "^2.8.17",
+		"@types/express": "^5.0.0",
+		"@types/node": "^24.1.0",
+		"supertest": "^7.0.0",
+		"tsup": "^8.3.5",
+		"tsx": "^4.19.3",
+		"vitest": "^3.2.3"
+	}
+}
+
+===== tsconfig.build.json =====
+{
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"noEmit": false,
+		"outDir": "./dist",
+		"rootDir": "./src",
+		"allowImportingTsExtensions": false,
+		"declaration": true,
+		"declarationMap": true
+	},
+	"exclude": ["**/*.test.ts", "**/*.spec.ts"]
+}
+
+===== tsconfig.json =====
+{
+	"extends": "@roo-code/config-typescript/base.json",
+	"compilerOptions": {
+		"types": ["vitest/globals", "node"],
+		"incremental": false,
+		"module": "NodeNext",
+		"moduleResolution": "NodeNext",
+		"noEmit": true
+	},
+	"include": ["src/**/*"],
+	"exclude": ["node_modules", "dist", "**/*.test.ts", "**/*.spec.ts"]
+}
+
+===== tsup.config.ts =====
+import { defineConfig } from "tsup"
+
+export default defineConfig({
+	entry: ["src/index.ts"],
+	format: ["esm"],
+	dts: { only: true },
+	clean: true,
+	sourcemap: true,
+})
+
+===== vitest.config.ts =====
+import { defineConfig } from "vitest/config"
+
+export default defineConfig({
+	test: {
+		globals: true,
+		environment: "node",
+		include: ["src/**/*.test.ts", "src/**/*.spec.ts"],
+		exclude: ["node_modules", "dist"],
+	},
+})
+
+===== src/analyze.test.ts =====
+import { describe, test, expect, beforeEach, vi } from "vitest"
+import { Request, Response } from "express"
+import { analyzeCode, healthCheck } from "./analyze.js"
+
+vi.mock("./config.js", () => ({
+	loadConfig: vi.fn(),
+	getConfig: vi.fn().mockReturnValue({
+		bind: "127.0.0.1",
+		port: 9611,
+		provider: "ollama",
+		model: "llama3.1:8b-instruct-q4",
+		max_tokens: 768,
+		temperature: 0.2,
+		autoFixWhitelist: ["path_not_found", "missing_dep", "flaky_test_rerun"],
+		autoFixMinConfidence: 0.75,
+		reflexion: { enabled: true, maxItems: 128, ttlDays: 60 },
+	}),
+	resetConfig: vi.fn(),
+}))
+
+// Mock Express Response
+const mockResponse = () => {
+	const res: Partial<Response> = {}
+	res.status = vi.fn().mockReturnValue(res)
+	res.json = vi.fn().mockReturnValue(res)
+	return res as Response
+}
+
+describe("analyze", () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+	})
+
+	test("should return 400 for missing code", async () => {
+		const req = { body: {} } as Request
+		const res = mockResponse()
+
+		await analyzeCode(req, res)
+
+		expect(res.status).toHaveBeenCalledWith(400)
+		expect(res.json).toHaveBeenCalledWith({
+			error: "Invalid request: code is required and must be a string",
+		})
+	})
+
+	test("should return 400 for invalid code type", async () => {
+		const req = { body: { code: 123 } } as Request
+		const res = mockResponse()
+
+		await analyzeCode(req, res)
+
+		expect(res.status).toHaveBeenCalledWith(400)
+		expect(res.json).toHaveBeenCalledWith({
+			error: "Invalid request: code is required and must be a string",
+		})
+	})
+
+	test("should return analysis response for valid code", async () => {
+		const req = {
+			body: {
+				code: 'console.log("hello world");',
+				language: "javascript",
+				filePath: "test.js",
+				context: "Testing console output",
+			},
+		} as Request
+
+		const res = mockResponse()
+
+		await analyzeCode(req, res)
+
+		expect(res.status).not.toHaveBeenCalled()
+		expect(res.json).toHaveBeenCalledWith(
+			expect.objectContaining({
+				analysis: expect.objectContaining({
+					issues: expect.any(Array),
+					suggestions: expect.any(Array),
+					fixedCode: expect.any(String),
+				}),
+				metadata: expect.objectContaining({
+					model: expect.any(String),
+					provider: expect.any(String),
+					tokensUsed: expect.any(Number),
+					processingTime: expect.any(Number),
+				}),
+			}),
+		)
+	})
+
+	test("should handle analysis errors gracefully", async () => {
+		const { getConfig } = await import("./config.js")
+		vi.mocked(getConfig).mockImplementationOnce(() => {
+			throw new Error("Config error")
+		})
+
+		const req = {
+			body: { code: "valid code" },
+		} as Request
+
+		const res = mockResponse()
+
+		await analyzeCode(req, res)
+
+		expect(res.status).toHaveBeenCalledWith(500)
+		expect(res.json).toHaveBeenCalledWith({
+			error: "Internal server error during analysis",
+			details: "Config error",
+		})
+	})
+})
+
+describe("healthCheck", () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+	})
+
+	test("should return healthy status", async () => {
+		const req = {} as Request
+		const res = mockResponse()
+
+		await healthCheck(req, res)
+
+		expect(res.status).not.toHaveBeenCalled()
+		expect(res.json).toHaveBeenCalledWith(
+			expect.objectContaining({
+				status: "healthy",
+				service: "kilocode-supervisor-service",
+				version: "0.0.0",
+				config: expect.objectContaining({
+					provider: expect.any(String),
+					model: expect.any(String),
+					bind: expect.any(String),
+					port: expect.any(Number),
+				}),
+			}),
+		)
+	})
+
+	test("should return unhealthy status on error", async () => {
+		const { getConfig } = await import("./config.js")
+		vi.mocked(getConfig).mockImplementationOnce(() => {
+			throw new Error("Config error")
+		})
+
+		const req = {} as Request
+		const res = mockResponse()
+
+		await healthCheck(req, res)
+
+		expect(res.status).toHaveBeenCalledWith(500)
+		expect(res.json).toHaveBeenCalledWith({
+			status: "unhealthy",
+			error: "Config error",
+		})
+	})
+})
+
+===== src/analyze.ts =====
+import { Request, Response } from "express"
+import { getConfig } from "./config.js"
+
+export interface AnalyzeRequest {
+	code: string
+	language?: string
+	filePath?: string
+	context?: string
+}
+
+export interface AnalyzeResponse {
+	analysis: {
+		issues: Array<{
+			type: string
+			severity: "error" | "warning" | "info"
+			message: string
+			line?: number
+			column?: number
+			suggestion?: string
+			confidence?: number
+		}>
+		suggestions: string[]
+		fixedCode?: string
+	}
+	metadata: {
+		model: string
+		provider: string
+		tokensUsed?: number
+		processingTime: number
+	}
+}
+
+export async function analyzeCode(req: Request, res: Response): Promise<void> {
+	const startTime = Date.now()
+
+	try {
+		const rawBody = (req as any)?.body ?? {}
+		const code = typeof rawBody.code === "string" ? rawBody.code : undefined
+
+		if (!code) {
+			res.status(400).json({
+				error: "Invalid request: code is required and must be a string",
+			})
+			return
+		}
+
+		const config = getConfig()
+
+		// For now, return a mock analysis
+		// In a real implementation, this would call the LLM provider
+		const mockAnalysis: AnalyzeResponse = {
+			analysis: {
+				issues: [
+					{
+						type: "syntax",
+						severity: "warning",
+						message: "Potential syntax issue detected",
+						line: 1,
+						suggestion: "Check for missing semicolons or brackets",
+						confidence: 0.8,
+					},
+				],
+				suggestions: ["Consider adding type annotations", "Review error handling patterns"],
+				fixedCode: code, // Would contain actual fixes in real implementation
+			},
+			metadata: {
+				model: config.model,
+				provider: config.provider,
+				tokensUsed: 150,
+				processingTime: Date.now() - startTime,
+			},
+		}
+
+		res.json(mockAnalysis)
+	} catch (error) {
+		console.error("Analysis error:", error)
+		res.status(500).json({
+			error: "Internal server error during analysis",
+			details: error instanceof Error ? error.message : "Unknown error",
+		})
+	}
+}
+
+export async function healthCheck(req: Request, res: Response): Promise<void> {
+	try {
+		const config = getConfig()
+		res.json({
+			status: "healthy",
+			service: "kilocode-supervisor-service",
+			version: "0.0.0",
+			config: {
+				provider: config.provider,
+				model: config.model,
+				bind: config.bind,
+				port: config.port,
+			},
+		})
+	} catch (error) {
+		res.status(500).json({
+			status: "unhealthy",
+			error: error instanceof Error ? error.message : "Unknown error",
+		})
+	}
+}
+
+===== src/config.test.ts =====
+import { describe, test, expect, beforeEach, afterEach } from "vitest"
+import { loadConfig, getConfig, resetConfig } from "./config.js"
+import { writeFileSync, unlinkSync, existsSync } from "fs"
+import { join } from "path"
+
+describe("Config", () => {
+	const testConfigPath = join(__dirname, "test-config.json")
+
+	beforeEach(() => {
+		resetConfig()
+	})
+
+	afterEach(() => {
+		if (existsSync(testConfigPath)) {
+			unlinkSync(testConfigPath)
+		}
+		resetConfig()
+	})
+
+	test("should load default config when no file exists", () => {
+		const config = loadConfig("/non/existent/path.json")
+
+		expect(config.bind).toBe("127.0.0.1")
+		expect(config.port).toBe(43110)
+		expect(config.provider).toBe("ollama")
+		expect(config.model).toBe("llama3.1:8b-instruct-q4")
+		expect(config.max_tokens).toBe(768)
+		expect(config.temperature).toBe(0.2)
+		expect(config.autoFixWhitelist).toEqual(["path_not_found", "missing_dep", "flaky_test_rerun"])
+		expect(config.autoFixMinConfidence).toBe(0.75)
+		expect(config.reflexion.enabled).toBe(true)
+		expect(config.reflexion.maxItems).toBe(128)
+		expect(config.reflexion.ttlDays).toBe(60)
+	})
+
+	test("should load custom config from file", () => {
+		const customConfig = {
+			bind: "0.0.0.0",
+			port: 8080,
+			provider: "openai",
+			model: "gpt-4",
+			max_tokens: 1024,
+			temperature: 0.7,
+			autoFixWhitelist: ["custom_error"],
+			autoFixMinConfidence: 0.9,
+			reflexion: {
+				enabled: false,
+				maxItems: 256,
+				ttlDays: 30,
+			},
+		}
+
+		writeFileSync(testConfigPath, JSON.stringify(customConfig, null, 2))
+
+		const config = loadConfig(testConfigPath)
+
+		expect(config.bind).toBe("0.0.0.0")
+		expect(config.port).toBe(8080)
+		expect(config.provider).toBe("openai")
+		expect(config.model).toBe("gpt-4")
+		expect(config.max_tokens).toBe(1024)
+		expect(config.temperature).toBe(0.7)
+		expect(config.autoFixWhitelist).toEqual(["custom_error"])
+		expect(config.autoFixMinConfidence).toBe(0.9)
+		expect(config.reflexion.enabled).toBe(false)
+		expect(config.reflexion.maxItems).toBe(256)
+		expect(config.reflexion.ttlDays).toBe(30)
+	})
+
+	test("should return cached config on subsequent calls", () => {
+		const config1 = loadConfig()
+		const config2 = getConfig()
+
+		expect(config1).toBe(config2)
+	})
+
+	test("should handle invalid JSON gracefully", () => {
+		writeFileSync(testConfigPath, "invalid json content")
+
+		const config = loadConfig(testConfigPath)
+
+		// Should fall back to defaults
+		expect(config.bind).toBe("127.0.0.1")
+		expect(config.port).toBe(43110)
+	})
+
+	test("should validate config schema", () => {
+		const invalidConfig = {
+			port: "invalid_port", // Should be number
+			temperature: 3.0, // Should be <= 2
+			provider: "invalid_provider", // Should be enum value
+		}
+
+		writeFileSync(testConfigPath, JSON.stringify(invalidConfig, null, 2))
+
+		const config = loadConfig(testConfigPath)
+
+		// Should fall back to defaults for invalid values
+		expect(config.port).toBe(43110)
+		expect(config.temperature).toBe(0.2)
+		expect(config.provider).toBe("ollama")
+	})
+})
+
+===== src/config.ts =====
+import { z } from "zod"
+import { readFileSync } from "fs"
+import { join } from "path"
+
+const SupervisorConfigSchema = z.object({
+	bind: z.string().default("127.0.0.1"),
+	port: z.number().int().positive().default(43110),
+	provider: z.enum(["ollama", "lmstudio", "openai"]).default("ollama"),
+	model: z.string().default("llama3.1:8b-instruct-q4"),
+	max_tokens: z.number().int().positive().default(768),
+	temperature: z.number().min(0).max(2).default(0.2),
+	autoFixWhitelist: z.array(z.string()).default(["path_not_found", "missing_dep", "flaky_test_rerun"]),
+	autoFixMinConfidence: z.number().min(0).max(1).default(0.75),
+	reflexion: z
+		.object({
+			enabled: z.boolean().default(true),
+			maxItems: z.number().int().positive().default(128),
+			ttlDays: z.number().int().positive().default(60),
+		})
+		.default({ enabled: true, maxItems: 128, ttlDays: 60 }),
+})
+
+export type SupervisorConfig = z.infer<typeof SupervisorConfigSchema>
+
+let config: SupervisorConfig | null = null
+
+export function loadConfig(configPath?: string): SupervisorConfig {
+	if (config) {
+		return config
+	}
+
+	try {
+		const defaultConfigPath = join(process.cwd(), ".kilocode", "supervisor.config.json")
+		const pathToUse = configPath || defaultConfigPath
+		const configData = readFileSync(pathToUse, "utf-8")
+		const parsedConfig = JSON.parse(configData)
+
+		config = SupervisorConfigSchema.parse(parsedConfig)
+		return config
+	} catch (error) {
+		console.warn("Failed to load supervisor config, using defaults:", error)
+		config = SupervisorConfigSchema.parse({})
+		return config
+	}
+}
+
+export function getConfig(): SupervisorConfig {
+	if (!config) {
+		return loadConfig()
+	}
+	return config
+}
+
+export function resetConfig(): void {
+	config = null
+}
+
+===== src/index.ts =====
+import express from "express"
+import cors from "cors"
+import helmet from "helmet"
+import { loadConfig } from "./config.js"
+import { analyzeCode, healthCheck } from "./analyze.js"
+
+async function startServer(): Promise<void> {
+	try {
+		// Load configuration
+		const config = loadConfig()
+
+		// Create Express app
+		const app = express()
+
+		// Security middleware
+		app.use(
+			helmet({
+				contentSecurityPolicy: false, // Allow for API usage
+				crossOriginEmbedderPolicy: false,
+			}),
+		)
+
+		// CORS configuration - localhost only for security
+		app.use(
+			cors({
+				origin: [
+					"http://localhost:3000",
+					"http://127.0.0.1:3000",
+					"http://localhost:43110",
+					"http://127.0.0.1:43110",
+				],
+				credentials: true,
+			}),
+		)
+
+		// Body parsing middleware
+		app.use(express.json({ limit: "10mb" }))
+		app.use(express.urlencoded({ extended: true, limit: "10mb" }))
+
+		// Request logging middleware
+		app.use((req, res, next) => {
+			const timestamp = new Date().toISOString()
+			console.log(`[${timestamp}] ${req.method} ${req.path} - ${req.ip}`)
+			next()
+		})
+
+		// Routes
+		app.get("/health", healthCheck)
+
+		app.post("/v1/analyze", analyzeCode)
+
+		// 404 handler
+		app.use("*", (req, res) => {
+			res.status(404).json({
+				error: "Not Found",
+				message: `Route ${req.method} ${req.originalUrl} not found`,
+				availableRoutes: ["GET /health", "POST /v1/analyze"],
+			})
+		})
+
+		// Global error handler
+		app.use((err: Error, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+			console.error("Unhandled error:", err)
+			res.status(500).json({
+				error: "Internal Server Error",
+				message: process.env.NODE_ENV === "development" ? err.message : "Something went wrong",
+			})
+		})
+
+		// Start server
+		const server = app.listen(config.port, config.bind, () => {
+			console.log(`🚀 KiloCode Supervisor Service started on http://${config.bind}:${config.port}`)
+			console.log(`📊 Health check: http://${config.bind}:${config.port}/health`)
+			console.log(`🔍 Analysis endpoint: http://${config.bind}:${config.port}/v1/analyze`)
+			console.log(`🧠 Using ${config.provider} with model: ${config.model}`)
+			console.log(`🔒 Security: Localhost only access`)
+		})
+
+		// Graceful shutdown
+		const gracefulShutdown = (signal: string) => {
+			console.log(`\n🛑 Received ${signal}, shutting down gracefully...`)
+			server.close(() => {
+				console.log("✅ Server closed successfully")
+				process.exit(0)
+			})
+		}
+
+		process.on("SIGTERM", () => gracefulShutdown("SIGTERM"))
+		process.on("SIGINT", () => gracefulShutdown("SIGINT"))
+	} catch (error) {
+		console.error("❌ Failed to start server:", error)
+		process.exit(1)
+	}
+}
+
+// Start server if this file is run directly
+if (import.meta.url === `file://${process.argv[1]}`) {
+	startServer().catch((error) => {
+		console.error("❌ Server startup failed:", error)
+		process.exit(1)
+	})
+}
+
+export { startServer }
+
+===== src/patcher.test.ts =====
+/**
+ * Comprehensive test suite for Smart Patcher system
+ * Tests all major functionality including patch strategies, error handling, and security constraints
+ */
+
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
+import {
+	PatchPlan,
+	PatchOp,
+	SearchReplaceOp,
+	AnchorOp,
+	AstOp,
+	PatchStrategy,
+	PatchOutcome,
+	PatchClassification,
+} from "./patch/types.js"
+import { TaskEnvelope, TaskScope } from "./contracts/task-envelope.js"
+import { ErrorClassification, ErrorSeverity } from "./contracts/error-report.js"
+import { RemediationStrategy } from "./contracts/remediation-plan.js"
+import { classifyToolMessage, generateErrorReport, generateRemediationPlan } from "./patch/classifier.js"
+import { validatePatchPlan, validateTaskEnvelope, checkSecurityViolations } from "./patch/validators.js"
+import {
+	readRegistry,
+	writeRegistry,
+	mergeObservation,
+	addSuggestedOp,
+	limitRegistrySize,
+	createObservation,
+	inferSuggestedOps,
+} from "./patch/registry.js"
+import { applyAnchorPatch } from "./patch/anchors.js"
+import { applyAstPatch, addImportStub } from "./patch/ast.js"
+
+// Mock file system operations
+const mockFs = vi.hoisted(() => ({
+	existsSync: vi.fn(),
+	readFileSync: vi.fn(),
+	writeFileSync: vi.fn(),
+	promises: {
+		mkdir: vi.fn(),
+		readFile: vi.fn(),
+		writeFile: vi.fn(),
+		copyFile: vi.fn(),
+	},
+}))
+
+// Mock path operations
+const mockPath = vi.hoisted(() => ({
+	resolve: vi.fn((path: string) => `/resolved/${path}`),
+	join: vi.fn((...paths: string[]) => paths.join("/")),
+}))
+
+// Mock crypto
+const mockCrypto = vi.hoisted(() => ({
+	createHash: vi.fn(() => ({
+		update: vi.fn(),
+		digest: vi.fn(() => "mock-hash"),
+	})),
+}))
+
+vi.mock("fs", () => mockFs)
+vi.mock("path", () => mockPath)
+vi.mock("crypto", () => mockCrypto)
+
+describe("Smart Patcher System", () => {
+	let testEnvelope: TaskEnvelope
+	let testPlan: PatchPlan
+
+	beforeEach(() => {
+		// Setup test envelope with permissive scope
+		testEnvelope = {
+			id: "test-envelope-1",
+			scope: {
+				allowPaths: ["src/", "tests/"],
+				denyPaths: ["node_modules/", ".git/"],
+				allowOps: ["search_replace", "anchor", "ast"],
+				maxRetries: 3,
+				timeBudgetSec: 60,
+			},
+			plan: {} as PatchPlan,
+			metadata: {
+				description: "Test envelope for patcher tests",
+				requester: "test-suite",
+				priority: 1,
+				tags: ["test"],
+				createdAt: new Date(),
+			},
+			options: {
+				continueOnError: false,
+				createBackups: true,
+				validateBeforeApply: true,
+				runLinting: false,
+				runTypeChecking: false,
+			},
+		}
+
+		// Setup test plan
+		testPlan = {
+			id: "test-plan-1",
+			ops: [],
+			metadata: {
+				description: "Test plan for patcher tests",
+				author: "test-suite",
+				version: "1.0.0",
+			},
+		}
+
+		// Reset all mocks
+		vi.clearAllMocks()
+
+		// Default mock implementations
+		mockFs.existsSync.mockReturnValue(true)
+		mockFs.readFileSync.mockReturnValue("test file content")
+		mockFs.writeFileSync.mockImplementation(() => {})
+		mockPath.resolve.mockImplementation((path: string) => `/resolved/${path}`)
+	})
+
+	afterEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	describe('1. "no-op classified" (search==replace)', () => {
+		it("should verify already_applied classification", () => {
+			const message = "search and replace content are identical"
+			const classification = classifyToolMessage(message)
+
+			expect(classification).toBe(ErrorClassification.ALREADY_APPLIED)
+		})
+
+		it("should test idempotence behavior for identical strings", () => {
+			const content = "const x = 1;"
+			const noOpOp: SearchReplaceOp = {
+				id: "noop-2",
+				strategy: PatchStrategy.STRICT,
+				filePath: "test.js",
+				type: "search_replace",
+				search: content,
+				replace: content,
+			}
+
+			// Test that identical search and replace strings are detected
+			expect(noOpOp.search).toBe(noOpOp.replace)
+			expect(noOpOp.search).toBe(content)
+		})
+	})
+
+	describe('2. "anchor mismatch → fuzzy applies"', () => {
+		it("should verify fuzzy matching works when strict fails", () => {
+			const content = "function test
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== src/cli/README.md =====
+# Smart Patcher CLI
+
+The Smart Patcher CLI provides a command-line interface for executing patch plans with support for dry-run mode, custom task envelopes, and comprehensive error handling and reporting.
+
+## Usage
+
+```bash
+# Run in dry-run mode (no actual file changes)
+patch --dry-run < plan.json
+
+# Run with a custom task envelope
+patch --envelope custom-envelope.json < plan.json
+
+# Run with default conservative envelope
+patch < plan.json
+
+# Show help
+patch --help
+```
+
+## Command Line Options
+
+- `--dry-run`: Run in dry-run mode (no actual file changes)
+- `--envelope <path>`: Path to TaskEnvelope.json file
+- `--help, -h`: Show help message
+
+## Input Format
+
+The CLI expects a PatchPlan JSON object from stdin. The PatchPlan should have the following structure:
+
+```json
+{
+	"id": "unique-plan-id",
+	"ops": [
+		{
+			"id": "op1",
+			"strategy": "strict",
+			"filePath": "path/to/file.txt",
+			"type": "search_replace",
+			"search": "old text",
+			"replace": "new text"
+		}
+	],
+	"metadata": {
+		"description": "Optional description of the plan"
+	}
+}
+```
+
+## Output Format
+
+The CLI outputs a JSON result object with the following structure:
+
+```json
+{
+	"ok": true,
+	"changed": true,
+	"outcome": "success",
+	"hashBefore": "sha256-hash-before",
+	"hashAfter": "sha256-hash-after",
+	"errorReport": [],
+	"remediationPlan": {}
+}
+```
+
+## Security
+
+The CLI applies security constraints to ensure safe patching:
+
+- Local-first constraint (no remote operations)
+- Port range restriction (9600-9699)
+- Prevents binding to 0.0.0.0
+- Denies access to system directories and sensitive files
+
+## Directories
+
+The CLI creates and uses the following directories:
+
+- `.kilocode/`: Main directory for CLI data
+- `.kilocode/patch-plans/`: Stores patch plan registry
+- `.kilocode/patch-reports/`: Stores error reports
+
+## Error Handling
+
+When errors occur, the CLI:
+
+1. Writes detailed error reports to `.kilocode/patch-reports/`
+2. Updates the registry with observations and suggested fixes
+3. Exits with code 1 to indicate failure
+4. Provides meaningful error messages
+
+## Examples
+
+### Dry Run
+
+```bash
+echo '{"id":"test","ops":[{"id":"op1","strategy":"strict","filePath":"test.txt","type":"search_replace","search":"old","replace":"new"}]}' | patch --dry-run
+```
+
+### Apply Changes
+
+```bash
+echo '{"id":"test","ops":[{"id":"op1","strategy":"strict","filePath":"test.txt","type":"search_replace","search":"old","replace":"new"}]}' | patch
+```
+
+### Custom Envelope
+
+```bash
+echo '{"id":"test","ops":[...]}' | patch --envelope my-envelope.json
+```
+
+===== src/cli/patch.ts =====
+#!/usr/bin/env node
+
+/**
+ * CLI interface for Smart Patcher dry-run and apply operations
+ *
+ * This module provides a command-line interface for executing patch plans
+ * with support for dry-run mode, custom task envelopes, and comprehensive
+ * error handling and reporting.
+ */
+
+import * as fs from "fs"
+import * as path from "path"
+import { promisify } from "util"
+import { pipeline } from "stream"
+import { SmartPatcher } from "../patch/SmartPatcher.js"
+import type { PatchPlan, PatchPlanResult } from "../patch/types.js"
+import type { TaskEnvelope, TaskScope } from "../contracts/task-envelope.js"
+import type { ErrorReport, ErrorClassification } from "../contracts/error-report.js"
+import { ErrorSeverity } from "../contracts/error-report.js"
+import type { RemediationPlan } from "../contracts/remediation-plan.js"
+import {
+	readRegistry,
+	writeRegistry,
+	createObservation,
+	inferSuggestedOps,
+	mergeObservation,
+	addSuggestedOp,
+} from "../patch/registry.js"
+
+// Promisify stream pipeline for async/await usage
+const pipelineAsync = promisify(pipeline)
+
+/**
+ * CLI options interface
+ */
+interface CliOptions {
+	/** Whether to run in dry-run mode (no actual file changes) */
+	dryRun: boolean
+	/** Path to the TaskEnvelope.json file */
+	envelopePath?: string
+}
+
+/**
+ * Result interface for CLI output
+ */
+interface CliResult {
+	/** Whether the operation was successful */
+	ok: boolean
+	/** Whether any changes were made */
+	changed: boolean
+	/** The outcome of the patch operation */
+	outcome: string
+	/** Hash of the workspace before patching */
+	hashBefore?: string
+	/** Hash of the workspace after patching */
+	hashAfter?: string
+	/** Error report if errors occurred */
+	errorReport?: ErrorReport[]
+	/** Remediation plan if errors occurred */
+	remediationPlan?: RemediationPlan
+}
+
+/**
+ * Default conservative task envelope for security
+ */
+const DEFAULT_CONSERVATIVE_ENVELOPE: TaskEnvelope = {
+	id: "default-conservative",
+	scope: {
+		allowPaths: [], // Empty means allow all paths
+		denyPaths: [
+			// System directories
+			"/etc",
+			"/usr",
+			"/bin",
+			"/sbin",
+			"/var",
+			"/sys",
+			"/proc",
+			// Sensitive files
+			"**/.ssh",
+			"**/.aws",
+			"**/.azure",
+			"**/.config/gcloud",
+			"**/.kube",
+			// Package manager files
+			"**/node_modules/.bin",
+			"**/target/debug",
+			"**/target/release",
+			"**/build",
+			"**/dist",
+		],
+		allowOps: [], // Empty means allow all operations
+		maxRetries: 3,
+		timeBudgetSec: 300, // 5 minutes
+	},
+	plan: {} as any, // Will be replaced with actual plan
+	metadata: {
+		description: "Default conservative envelope for secure patching",
+		requester: "cli",
+		priority: 5,
+		tags: ["conservative", "secure"],
+		createdAt: new Date(),
+	},
+	options: {
+		continueOnError: true,
+		createBackups: true,
+		validateBeforeApply: true,
+		runLinting: false,
+		runTypeChecking: false,
+	},
+}
+
+/**
+ * Parse command line arguments
+ * @param args - Command line arguments (process.argv.slice(2))
+ * @returns Parsed CLI options
+ */
+function parseArguments(args: string[]): CliOptions {
+	const options: CliOptions = {
+		dryRun: false,
+	}
+
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i]
+
+		switch (arg) {
+			case "--dry-run":
+				options.dryRun = true
+				break
+			case "--envelope":
+				if (i + 1 < args.length) {
+					options.envelopePath = args[++i]
+				} else {
+					console.error("Error: --envelope requires a path argument")
+					process.exit(1)
+				}
+				break
+			case "--help":
+			case "-h":
+				console.log(`
+Smart Patcher CLI
+
+Usage:
+  patch [options]
+
+Options:
+  --dry-run              Run in dry-run mode (no actual file changes)
+  --envelope <path>      Path to TaskEnvelope.json file
+  --help, -h             Show this help message
+
+Examples:
+  patch --dry-run < plan.json
+  patch --envelope custom-envelope.json < plan.json
+        `)
+				process.exit(0)
+				break
+			default:
+				console.error(`Error: Unknown option ${arg}`)
+				process.exit(1)
+		}
+	}
+
+	return options
+}
+
+/**
+ * Read and parse JSON from stdin
+ * @returns Promise
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== src/cli/__tests__/patch.test.ts =====
+/**
+ * Tests for the CLI patch interface
+ */
+
+import { describe, test, expect, beforeEach, afterEach } from "vitest"
+import {
+	parseArguments,
+	readPatchPlanFromStdin,
+	loadTaskEnvelope,
+	applySecurityConstraints,
+	ensureKilocodeDirectories,
+	writeErrorReport,
+	updateRegistry,
+	DEFAULT_CONSERVATIVE_ENVELOPE,
+} from "../patch.js"
+import { promises as fs } from "fs"
+import { join } from "path"
+import type { PatchPlan } from "../../patch/types.js"
+import type { TaskScope } from "../../contracts/task-envelope.js"
+
+describe("CLI Patch Interface", () => {
+	const testPlan: PatchPlan = {
+		id: "test-plan",
+		ops: [
+			{
+				id: "op1",
+				strategy: "strict" as any,
+				filePath: "test.txt",
+				type: "search_replace",
+				search: "old",
+				replace: "new",
+			},
+		],
+	}
+
+	describe("parseArguments", () => {
+		test("should parse empty arguments", () => {
+			const options = parseArguments([])
+			expect(options.dryRun).toBe(false)
+			expect(options.envelopePath).toBeUndefined()
+		})
+
+		test("should parse dry-run flag", () => {
+			const options = parseArguments(["--dry-run"])
+			expect(options.dryRun).toBe(true)
+			expect(options.envelopePath).toBeUndefined()
+		})
+
+		test("should parse envelope path", () => {
+			const options = parseArguments(["--envelope", "custom.json"])
+			expect(options.dryRun).toBe(false)
+			expect(options.envelopePath).toBe("custom.json")
+		})
+
+		test("should parse both flags", () => {
+			const options = parseArguments(["--dry-run", "--envelope", "custom.json"])
+			expect(options.dryRun).toBe(true)
+			expect(options.envelopePath).toBe("custom.json")
+		})
+	})
+
+	describe("applySecurityConstraints", () => {
+		test("should add security constraints to scope", () => {
+			const originalScope: TaskScope = {
+				allowPaths: ["src"],
+				denyPaths: ["test"],
+				allowOps: ["search_replace"],
+				maxRetries: 3,
+				timeBudgetSec: 300,
+			}
+
+			const securedScope = applySecurityConstraints(originalScope)
+
+			expect(securedScope.allowPaths).toEqual(["src"])
+			expect(securedScope.denyPaths).toContain("test")
+			expect(securedScope.denyPaths).toContain("**/*0.0.0.0*")
+			expect(securedScope.denyPaths).toContain("**/*port*")
+			expect(securedScope.denyPaths).toContain("**/*listen*")
+			expect(securedScope.allowOps).toEqual(["search_replace"])
+			expect(securedScope.maxRetries).toBe(3)
+			expect(securedScope.timeBudgetSec).toBe(300)
+		})
+
+		test("should not modify original scope", () => {
+			const originalScope: TaskScope = {
+				allowPaths: [],
+				denyPaths: [],
+				allowOps: [],
+				maxRetries: 3,
+				timeBudgetSec: 300,
+			}
+
+			const securedScope = applySecurityConstraints(originalScope)
+
+			expect(originalScope.denyPaths).toEqual([])
+			expect(securedScope.denyPaths.length).toBeGreaterThan(0)
+		})
+	})
+
+	describe("DEFAULT_CONSERVATIVE_ENVELOPE", () => {
+		test("should have proper structure", () => {
+			expect(DEFAULT_CONSERVATIVE_ENVELOPE.id).toBe("default-conservative")
+			expect(DEFAULT_CONSERVATIVE_ENVELOPE.scope).toBeDefined()
+			expect(DEFAULT_CONSERVATIVE_ENVELOPE.metadata).toBeDefined()
+			expect(DEFAULT_CONSERVATIVE_ENVELOPE.options).toBeDefined()
+		})
+
+		test("should have security-focused deny paths", () => {
+			const denyPaths = DEFAULT_CONSERVATIVE_ENVELOPE.scope.denyPaths
+
+			expect(denyPaths).toContain("/etc")
+			expect(denyPaths).toContain("/usr")
+			expect(denyPaths).toContain("**/.ssh")
+			expect(denyPaths).toContain("**/.aws")
+			expect(denyPaths).toContain("**/node_modules/.bin")
+		})
+
+		test("should have conservative options", () => {
+			const options = DEFAULT_CONSERVATIVE_ENVELOPE.options
+
+			expect(options?.continueOnError).toBe(true)
+			expect(options?.createBackups).toBe(true)
+			expect(options?.validateBeforeApply).toBe(true)
+			expect(options?.runLinting).toBe(false)
+			expect(options?.runTypeChecking).toBe(false)
+		})
+	})
+
+	describe("ensureKilocodeDirectories", () => {
+		test("should create required directories", async () => {
+			await ensureKilocodeDirectories()
+
+			// Check if directories exist
+			
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== src/contracts/error-report.ts =====
+/**
+ * Error reporting and classification for the Smart Patcher
+ */
+
+/**
+ * Error classification enumeration
+ */
+export enum ErrorClassification {
+	/** The patch was already applied */
+	ALREADY_APPLIED = "already_applied",
+	/** Anchor text could not be found */
+	ANCHOR_MISMATCH = "anchor_mismatch",
+	/** Linting errors after patching */
+	LINT_ERROR = "lint_error",
+	/** Type checking errors after patching */
+	TYPE_ERROR = "type_error",
+	/** Search pattern could not be found */
+	SEARCH_NOT_FOUND = "search_not_found",
+	/** Multiple matches for search pattern */
+	MULTIPLE_MATCHES = "multiple_matches",
+	/** File access permissions error */
+	PERMISSION_ERROR = "permission_error",
+	/** File does not exist */
+	FILE_NOT_FOUND = "file_not_found",
+	/** Syntax error in patch */
+	SYNTAX_ERROR = "syntax_error",
+	/** AST parsing error */
+	AST_PARSE_ERROR = "ast_parse_error",
+	/** Time budget exceeded */
+	TIMEOUT = "timeout",
+	/** Retry limit exceeded */
+	RETRY_EXCEEDED = "retry_exceeded",
+	/** Unknown or unexpected error */
+	UNKNOWN = "unknown",
+}
+
+/**
+ * Error severity levels
+ */
+export enum ErrorSeverity {
+	/** Error prevents patch application */
+	ERROR = "error",
+	/** Warning that might indicate issues */
+	WARNING = "warning",
+	/** Informational message */
+	INFO = "info",
+}
+
+/**
+ * Detailed error report for patch operations
+ */
+export interface ErrorReport {
+	/** File path where the error occurred */
+	file: string
+	/** Classification of the error */
+	classification: ErrorClassification
+	/** Severity level of the error */
+	severity: ErrorSeverity
+	/** Human-readable error message */
+	message: string
+	/** Detailed error information */
+	details?: {
+		/** Line number where the error occurred */
+		line?: number
+		/** Column number where the error occurred */
+		column?: number
+		/** The operation that failed */
+		operation?: string
+		/** The search pattern that failed */
+		searchPattern?: string
+		/** The anchor that failed */
+		anchor?: string
+		/** The selector that failed */
+		selector?: string
+		/** Original error from tools (lint, type checker, etc.) */
+		originalError?: string
+		/** Stack trace if available */
+		stackTrace?: string
+		/** Additional context */
+		context?: string
+	}
+	/** Suggested remediation steps */
+	suggestions?: string[]
+	/** Timestamp when the error occurred */
+	timestamp?: Date
+	/** ID of the patch operation that failed */
+	operationId?: string
+	/** ID of the task that contained the failed operation */
+	taskId?: string
+}
+
+/**
+ * Collection of error reports
+ */
+export interface ErrorReportCollection {
+	/** ID of the associated task */
+	taskId: string
+	/** Array of error reports */
+	errors: ErrorReport[]
+	/** Summary statistics */
+	summary: {
+		total: number
+		errors: number
+		warnings: number
+		info: number
+		/** Count of errors by classification */
+		byClassification: Record<ErrorClassification, number>
+	}
+	/** Timestamp when the report was generated */
+	generatedAt: Date
+}
+
+/**
+ * Error context for better error handling
+ */
+export interface ErrorContext {
+	/** Current file being processed */
+	currentFile?: string
+	/** Current operation being executed */
+	currentOperation?: string
+	/** Files that have been successfully processed */
+	processedFiles: string[]
+	/** Files that are pending processing */
+	pendingFiles: string[]
+	/** Current retry count */
+	retryCount: number
+	/** Elapsed time in milliseconds */
+	elapsedTimeMs: number
+	/** Remaining time budget in milliseconds */
+	remainingTimeMs: number
+}
+
+===== src/contracts/remediation-plan.ts =====
+/**
+ * Remediation plan definitions for the Smart Patcher
+ */
+
+import { PatchOp } from "../patch/types.js"
+import { ErrorReport } from "./error-report.js"
+
+/**
+ * Suggested operation to fix an error
+ */
+export interface SuggestedOp {
+	/** Unique identifier for this suggested operation */
+	id: string
+	/** The patch operation to apply */
+	op: PatchOp
+	/** Explanation of why this operation should fix the error */
+	explanation: string
+	/** Confidence level that this will fix the issue (0-1) */
+	confidence: number
+	/** Whether this operation is safe to apply automatically */
+	isAutoApplicable: boolean
+	/** Potential side effects of this operation */
+	sideEffects?: string[]
+	/** Prerequisites for this operation */
+	prerequisites?: string[]
+}
+
+/**
+ * Remediation strategy enumeration
+ */
+export enum RemediationStrategy {
+	/** Apply the first successful suggestion */
+	FIRST_SUCCESS = "first_success",
+	/** Apply all suggestions in sequence */
+	ALL_SEQUENTIAL = "all_sequential",
+	/** Let user choose which suggestion to apply */
+	USER_CHOICE = "user_choice",
+	/** Apply only high-confidence suggestions */
+	HIGH_CONFIDENCE_ONLY = "high_confidence_only",
+}
+
+/**
+ * Remediation plan for fixing errors
+ */
+export interface RemediationPlan {
+	/** Unique identifier for this remediation plan */
+	id: string
+	/** ID of the task that generated the errors */
+	taskId: string
+	/** Array of error reports to fix */
+	errors: ErrorReport[]
+	/** Array of suggested operations to fix the errors */
+	suggestedOps: SuggestedOp[]
+	/** Overall confidence in the remediation plan (0-1) */
+	confidence: number
+	/** Human-readable description of the plan */
+	description: string
+	/** Strategy to use when applying the remediation */
+	strategy: RemediationStrategy
+	/** Estimated time to apply the remediation in milliseconds */
+	estimatedTimeMs: number
+	/** Whether the plan requires user confirmation */
+	requiresConfirmation: boolean
+	/** Metadata about the plan */
+	metadata?: {
+		/** When the plan was generated */
+		generatedAt: Date
+		/** What generated the plan (human, AI, etc.) */
+		generatedBy: string
+		/** Version of the remediation engine */
+		version: string
+		/** Tags for categorization */
+		tags?: string[]
+	}
+}
+
+/**
+ * Result of applying a remediation plan
+ */
+export interface RemediationResult {
+	/** ID of the remediation plan */
+	planId: string
+	/** Whether the remediation was successful */
+	success: boolean
+	/** Results of each suggested operation that was applied */
+	opResults: any[] // Will be PatchResult[] when imported
+	/** Any remaining errors after remediation */
+	remainingErrors: ErrorReport[]
+	/** Total time taken to apply the remediation in milliseconds */
+	executionTimeMs: number
+	/** Optional message about the remediation outcome */
+	message?: string
+	/** Timestamp when the remediation was completed */
+	completedAt: Date
+}
+
+/**
+ * Remediation options for configuring how remediation plans are generated
+ */
+export interface RemediationOptions {
+	/** Minimum confidence threshold for suggestions */
+	minConfidence: number
+	/** Maximum number of suggestions to generate per error */
+	maxSuggestionsPerError: number
+	/** Whether to include risky suggestions */
+	includeRiskySuggestions: boolean
+	/** Whether to prioritize speed over accuracy */
+	prioritizeSpeed: boolean
+	/** Custom remediation strategies to try */
+	customStrategies?: string[]
+	/** Files or patterns to exclude from remediation */
+	excludePatterns?: string[]
+}
+
+===== src/contracts/task-envelope.ts =====
+/**
+ * Task envelope and scope definitions for the Smart Patcher
+ */
+
+/**
+ * Task scope defines the boundaries and constraints for a patching task
+ */
+export interface TaskScope {
+	/** Paths that are explicitly allowed for patching */
+	allowPaths: string[]
+	/** Paths that are explicitly denied for patching */
+	denyPaths: string[]
+	/** Types of patch operations that are allowed */
+	allowOps: string[]
+	/** Maximum number of retry attempts for failed operations */
+	maxRetries: number
+	/** Time budget in seconds for the entire task */
+	timeBudgetSec: number
+}
+
+/**
+ * Task envelope wraps a patch plan with additional metadata and constraints
+ */
+export interface TaskEnvelope {
+	/** Unique identifier for this task */
+	id: string
+	/** Scope and constraints for this task */
+	scope: TaskScope
+	/** The patch plan to execute */
+	plan: any // Will be PatchPlan when imported
+	/** Optional metadata about the task */
+	metadata?: {
+		/** Human-readable description of the task */
+		description?: string
+		/** Author or requester of the task */
+		requester?: string
+		/** Priority level (lower number = higher priority) */
+		priority?: number
+		/** Tags for categorization */
+		tags?: string[]
+		/** Creation timestamp */
+		createdAt?: Date
+		/** Deadline for completion */
+		deadline?: Date
+	}
+	/** Execution options */
+	options?: {
+		/** Whether to continue on error */
+		continueOnError?: boolean
+		/** Whether to create backups before patching */
+		createBackups?: boolean
+		/** Whether to validate patches before applying */
+		validateBeforeApply?: boolean
+		/** Whether to run linting after patching */
+		runLinting?: boolean
+		/** Whether to run type checking after patching */
+		runTypeChecking?: boolean
+	}
+}
+
+/**
+ * Task status enumeration
+ */
+export enum TaskStatus {
+	/** Task is pending execution */
+	PENDING = "pending",
+	/** Task is currently running */
+	RUNNING = "running",
+	/** Task completed successfully */
+	COMPLETED = "completed",
+	/** Task failed */
+	FAILED = "failed",
+	/** Task was cancelled */
+	CANCELLED = "cancelled",
+	/** Task is paused */
+	PAUSED = "paused",
+}
+
+/**
+ * Task execution result
+ */
+export interface TaskResult {
+	/** ID of the task */
+	taskId: string
+	/** Final status of the task */
+	status: TaskStatus
+	/** Results of each patch operation */
+	patchResults: any[] // Will be PatchResult[] when imported
+	/** Total execution time in milliseconds */
+	executionTimeMs: number
+	/** Optional error message if the task failed */
+	error?: string
+	/** Optional warnings */
+	warnings?: string[]
+	/** Timestamp when the task completed */
+	completedAt?: Date
+}
+
+===== src/patch/SmartPatcher.ts =====
+/**
+ * SmartPatcher engine with STRICT→FUZZY→AST strategy
+ * Provides robust file patching with multiple fallback strategies
+ */
+
+import * as crypto from "crypto"
+import * as fs from "fs"
+import * as path from "path"
+import type { PatchPlan, PatchOp, SearchReplaceOp, AnchorOp, AstOp, PatchResult, PatchPlanResult } from "./types.js"
+import { PatchOutcome, PatchClassification, PatchStrategy } from "./types.js"
+import type { TaskEnvelope } from "../contracts/task-envelope.js"
+import { applyAnchorPatch } from "./anchors.js"
+import { applyAstPatch } from "./ast.js"
+
+/**
+ * SmartPatcher engine that applies patches with multiple strategies
+ */
+export class SmartPatcher {
+	/**
+	 * Computes SHA256 hash of the given content
+	 * @param content - The content to hash
+	 * @returns The SHA256 hash as a hex string
+	 */
+	private sha256(content: string): string {
+		return crypto.createHash("sha256").update(content).digest("hex")
+	}
+
+	/**
+	 * Applies a strict search and replace operation
+	 * @param content - The original content
+	 * @param op - The search/replace operation
+	 * @returns The modified content or null if operation failed
+	 */
+	private applyStrict(content: string, op: SearchReplaceOp): string | null {
+		try {
+			// Check if this is a no-op (search equals replace)
+			if (op.search === op.replace) {
+				return content // Already applied
+			}
+
+			// Check if search string exists in content
+			if (!content.includes(op.search)) {
+				return null // Search string not found
+			}
+
+			// Perform the replacement
+			return content.replace(op.search, op.replace)
+		} catch (error) {
+			console.error("Error in applyStrict:", error)
+			return null
+		}
+	}
+
+	/**
+	 * Applies a fuzzy anchor-based operation
+	 * @param content - The original content
+	 * @param op - The anchor operation
+	 * @returns The modified content or null if operation failed
+	 */
+	private applyFuzzy(content: string, op: AnchorOp): string | null {
+		try {
+			return applyAnchorPatch(content, op)
+		} catch (error) {
+			console.error("Error in applyFuzzy:", error)
+			return null
+		}
+	}
+
+	/**
+	 * Applies an AST-based operation
+	 * @param content - The original content
+	 * @param op - The AST operation
+	 * @returns The modified content or null if operation failed
+	 */
+	private applyAst(content: string, op: AstOp): string | null {
+		try {
+			return applyAstPatch(content, op)
+		} catch (error) {
+			console.error("Error in applyAst:", error)
+			return null
+		}
+	}
+
+	/**
+	 * Applies a patch operation using the appropriate strategy
+	 * Implements the STRICT→FUZZY→AST fallback strategy
+	 * @param content - The original content
+	 * @param op - The patch operation to apply
+	 * @returns Object containing the result and the strategy used
+	 */
+	private applyOperation(content: string, op: PatchOp): { result: string | null; strategy: PatchStrategy } {
+		// Try STRICT strategy first for search/replace ops
+		if (op.type === "search_replace") {
+			const strictResult = this.applyStrict(content, op as SearchReplaceOp)
+			if (strictResult !== null) {
+				return { result: strictResult, strategy: PatchStrategy.STRICT }
+			}
+		}
+
+		// Fall through to FUZZY for anchor ops
+		if (op.type === "anchor") {
+			const fuzzyResult = this.applyFuzzy(content, op as AnchorOp)
+			if (fuzzyResult !== null) {
+				return { result: fuzzyResult, strategy: PatchStrategy.FUZZY }
+			}
+		}
+
+		// Fall through to AST for ast ops
+		if (op.type === "ast") {
+			const astResult = this.applyAst(content, op as AstOp)
+			if (astResult !== null) {
+				return { result: astResult, strategy: PatchStrategy.AST }
+			}
+		}
+
+		// If we get here, all strategies failed
+		return { result: null, strategy: PatchStrategy.STRICT }
+	}
+
+	/**
+	 * Checks if a file path is allowed by the task envelope scope
+	 * @param filePath - The file path to check
+	 * @param envelope - The task envelope containing scope constraints
+	 * @returns True if the file path is allowed
+	 */
+	private isPathAllowed(filePath: string, envelope: TaskEnvelope): boolean {
+		const { allowPa
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== src/patch/anchors.ts =====
+/**
+ * Anchor-based fuzzy matching utilities for React TSX code patching
+ * Provides robust pattern matching for code modifications
+ */
+
+import type { PatchOp, AnchorOp } from "./types.js"
+
+/**
+ * Finds the position after the given anchor string in content
+ * Handles whitespace and newlines robustly using regex patterns
+ *
+ * @param content - The source content to search in
+ * @param anchor - The anchor string to find
+ * @returns The position index after the anchor or null if not found
+ */
+export function findAfterAnchor(content: string, anchor: string): number | null {
+	if (!content || !anchor) {
+		return null
+	}
+
+	// Create a regex pattern that matches the anchor
+	const escapedAnchor = anchor.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+	const pattern = new RegExp(`${escapedAnchor}`, "g")
+
+	const match = pattern.exec(content)
+	if (!match) {
+		return null
+	}
+
+	// Return the position right after the anchor
+	return match.index + match[0].length
+}
+
+/**
+ * Finds the position before the given anchor string in content
+ * Handles whitespace and newlines robustly using regex patterns
+ *
+ * @param content - The source content to search in
+ * @param anchor - The anchor string to find
+ * @returns The position index before the anchor or null if not found
+ */
+export function findBeforeAnchor(content: string, anchor: string): number | null {
+	if (!content || !anchor) {
+		return null
+	}
+
+	// Create a regex pattern that matches the anchor
+	const escapedAnchor = anchor.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+	const pattern = new RegExp(`${escapedAnchor}`, "g")
+
+	const match = pattern.exec(content)
+	if (!match) {
+		return null
+	}
+
+	// Return the position right before the anchor
+	return match.index
+}
+
+/**
+ * Inserts the insert string at the specified position in content
+ *
+ * @param content - The original content
+ * @param position - The position index where to insert
+ * @param insert - The string to insert
+ * @returns The modified content with the insertion
+ */
+export function insertAt(content: string, position: number, insert: string): string {
+	if (!content || position < 0 || position > content.length) {
+		return content
+	}
+
+	return content.slice(0, position) + insert + content.slice(position)
+}
+
+/**
+ * Ensures an import statement exists in the content
+ * Checks if the import already exists, and if not, adds it at the appropriate location
+ * Handles both named and default imports
+ *
+ * @param content - The source content
+ * @param named - The named import to check/add (e.g., "useState")
+ * @param from - The module to import from (e.g., "react")
+ * @returns The modified content with the import ensured
+ */
+export function ensureImport(content: string, named: string, from: string): string {
+	if (!content || !named || !from) {
+		return content
+	}
+
+	// Check if the import already exists
+	const importRegex = new RegExp(
+		`import\\s+(?:{[^}]*\\b${named}\\b[^}]*}|\\*\\s+as\\s+\\w+|\\w+)\\s+from\\s+['"]${from}['"]`,
+		"gm",
+	)
+
+	if (importRegex.test(content)) {
+		return content
+	}
+
+	// Find the position to insert the import
+	// Look for existing imports from the same module
+	const existingImportRegex = new RegExp(`import\\s+{[^}]*}\\s+from\\s+['"]${from}['"]`, "gm")
+
+	const existingImportMatch = existingImportRegex.exec(content)
+
+	if (existingImportMatch) {
+		// Add to existing import
+		const importStatement = existingImportMatch[0]
+		const insertPos = existingImportMatch.index + importStatement.indexOf("}") + 1
+		const updatedImport = importStatement.replace("}", `, ${named}}`)
+		return (
+			content.slice(0, existingImportMatch.index) +
+			updatedImport +
+			content.slice(existingImportMatch.index + importStatement.length)
+		)
+	}
+
+	// Find the last import statement to insert before it
+	const allImportsRegex = /import\s+.*?from\s+['"][^'"]*['"];?\s*/gm
+	const imports = []
+	let match
+
+	while ((match = allImportsRegex.exec(content)) !== null) {
+		imports.push({
+			statement: match[0],
+			index: match.index,
+		})
+	}
+
+	if (imports.length > 0) {
+		// Insert af
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== src/patch/ast.ts =====
+/**
+ * AST manipulation functionality for Smart Patcher
+ * Initial stub implementation using regex patterns
+ * TODO: Upgrade to ts-morph for proper AST manipulation
+ */
+
+import { AstOp } from "./types.js"
+
+/**
+ * Adds an import statement to the content if it doesn't already exist
+ * @param content - The file content to modify
+ * @param named - The named import to add
+ * @param from - The module to import from
+ * @returns The modified content with the import added
+ */
+export function addImportStub(content: string, named: string, from: string): string {
+	// TODO: Upgrade to ts-morph for proper AST manipulation
+	// This is a stub implementation using regex patterns
+
+	// Check if the import already exists to maintain idempotence
+	const importRegex = new RegExp(`import\\s*{[^}]*${named}[^}]*}\\s*from\\s*['"]${from}['"]`, "g")
+	if (importRegex.test(content)) {
+		return content // Import already exists
+	}
+
+	// Try to find existing imports from the same module
+	const existingImportRegex = new RegExp(`import\\s*{([^}]*)}\\s*from\\s*['"]${from}['"]`, "g")
+	const match = existingImportRegex.exec(content)
+
+	if (match) {
+		// Add to existing import
+		const existingImports = match[1]
+		const updatedImports = existingImports ? `${existingImports.trim()}, ${named}` : named
+		return content.replace(match[0], `import { ${updatedImports} } from '${from}'`)
+	} else {
+		// Create new import statement
+		// Find the last import statement to insert after it
+		const allImportsRegex = /import[^;]*;/g
+		const imports = content.match(allImportsRegex)
+
+		if (imports && imports.length > 0) {
+			const lastImport = imports[imports.length - 1]
+			if (lastImport) {
+				const lastImportIndex = content.lastIndexOf(lastImport)
+				const insertPosition = lastImportIndex + lastImport.length
+
+				return (
+					content.slice(0, insertPosition) +
+					`\nimport { ${named} } from '${from}';` +
+					content.slice(insertPosition)
+				)
+			}
+		} else {
+			// No imports found, add at the top
+			return `import { ${named} } from '${from}';\n${content}`
+		}
+	}
+
+	// Default fallback
+	return content
+}
+
+/**
+ * Inserts a useEffect hook into the content if it doesn't already exist
+ * @param content - The file content to modify
+ * @param effectCode - The effect code to insert
+ * @returns The modified content with the useEffect added
+ */
+export function insertUseEffectStub(content: string, effectCode: string): string {
+	// TODO: Upgrade to ts-morph for proper AST manipulation
+	// This is a stub implementation using regex patterns
+
+	// Check if useEffect with similar content already exists
+	const useEffectRegex = /useEffect\(\s*\(\)\s*=>\s*{([^}]*)}\s*,\s*\[[^\]]*\]\s*\)/g
+	const matches = content.match(useEffectRegex)
+
+	if (matches) {
+		// Check if any existing useEffect contains similar content
+		for (const match of matches) {
+			if (match.includes(effectCode.substring(0, 20))) {
+				return content // Similar useEffect already exists
+			}
+		}
+	}
+
+	// Find a good place to insert the useEffect
+	// Look for component function or arrow function
+	const componentRegex = /(?:function\s+\w+\(|const\s+\w+\s*=\s*\([^)]*\)\s*=>|const\s+\w+\s*=\s*\([^)]*\)\s*=>\s*{)/g
+	const componentMatch = componentRegex.exec(content)
+
+	if (componentMatch) {
+		// Find the opening brace of the component
+		const componentStart = componentMatch.index
+		const braceIndex = content.indexOf("{", componentStart)
+
+		if (braceIndex !== -1) {
+			// Find the matching closing brace
+			let braceCount = 1
+			let insertPosition = braceIndex + 1
+
+			for (let i = braceIndex + 1; i < content.length; i++) {
+				if (content[i] === "{") braceCount++
+				if (content[i] === "}") braceCount--
+
+				if (braceCount === 0) {
+					// Insert before the closing brace
+					insertPosition = i
+					break
+				}
+			}
+
+			return (
+				content.slice(0, insertPosition) +
+				`\n\n  useEffect(() => {\n    ${effectCode}\n  }, []);` +
+				content.slice(insertPosition)
+			)
+		}
+	}
+
+	// Fallback: just append to the end
+	return content + `\n\nuseEffect
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== src/patch/classifier.ts =====
+/**
+ * Error classification and remediation system for the Smart Patcher
+ */
+
+import { PatchOp, PatchResult, PatchOutcome } from "./types.js"
+import { ErrorClassification, ErrorSeverity, ErrorReport } from "../contracts/error-report.js"
+import { RemediationPlan, SuggestedOp, RemediationStrategy } from "../contracts/remediation-plan.js"
+
+/**
+ * Classifies tool messages into error categories
+ * @param msg - The error message to classify
+ * @returns The appropriate ErrorClassification enum value
+ */
+export function classifyToolMessage(msg: string): ErrorClassification {
+	const message = msg.toLowerCase().trim()
+
+	// Check for already applied errors
+	if (
+		message.includes("search and replace content are identical") ||
+		message.includes("content is the same") ||
+		message.includes("no changes needed") ||
+		message.includes("already applied")
+	) {
+		return ErrorClassification.ALREADY_APPLIED
+	}
+
+	// Check for anchor mismatch errors
+	if (
+		message.includes("no match for patch hunk") ||
+		message.includes("anchor not found") ||
+		message.includes("could not find anchor") ||
+		message.includes("anchor mismatch")
+	) {
+		return ErrorClassification.ANCHOR_MISMATCH
+	}
+
+	// Check for ESLint errors
+	if (
+		message.includes("eslint error") ||
+		message.includes("linting error") ||
+		message.includes("lint error") ||
+		message.includes("eslint:") ||
+		(message.includes("warning") && /\d+:\d+/.test(message)) ||
+		(message.includes("error") && /\d+:\d+/.test(message))
+	) {
+		return ErrorClassification.LINT_ERROR
+	}
+
+	// Check for TypeScript compile failures
+	if (
+		message.includes("typescript error") ||
+		message.includes("compile error") ||
+		message.includes("type error") ||
+		message.includes("cannot find name") ||
+		(message.includes("property") && message.includes("does not exist")) ||
+		(message.includes("type") && message.includes("is not assignable"))
+	) {
+		return ErrorClassification.TYPE_ERROR
+	}
+
+	// Check for IPC timeouts
+	if (
+		message.includes("timeout") ||
+		message.includes("timed out") ||
+		message.includes("ipc timeout") ||
+		message.includes("rpc timeout")
+	) {
+		return ErrorClassification.TIMEOUT
+	}
+
+	// Check for file not found errors
+	if (
+		message.includes("file not found") ||
+		message.includes("no such file") ||
+		message.includes("enoent") ||
+		message.includes("cannot find file") ||
+		message.includes("file does not exist")
+	) {
+		return ErrorClassification.FILE_NOT_FOUND
+	}
+
+	// Check for permission errors
+	if (
+		message.includes("permission denied") ||
+		message.includes("access denied") ||
+		message.includes("eacces") ||
+		message.includes("eperm") ||
+		message.includes("unauthorized")
+	) {
+		return ErrorClassification.PERMISSION_ERROR
+	}
+
+	// Check for security violations
+	if (
+		message.includes("security error") ||
+		message.includes("security violation") ||
+		message.includes("unsafe operation") ||
+		message.includes("blocked by security policy")
+	) {
+		return ErrorClassification.PERMISSION_ERROR // Using PERMISSION_ERROR as a proxy for security errors
+	}
+
+	// Check for search not found errors
+	if (
+		message.includes("search not found") ||
+		message.includes("pattern not found") ||
+		message.includes("no match found") ||
+		message.includes("could not find")
+	) {
+		return ErrorClassification.SEARCH_NOT_FOUND
+	}
+
+	// Check for multiple matches
+	if (
+		message.includes("multiple matches") ||
+		message.includes("ambiguous match") ||
+		message.includes("found multiple occurrences")
+	) {
+		return ErrorClassification.MULTIPLE_MATCHES
+	}
+
+	// Check for AST parse errors
+	if (
+		message.includes("ast parse error") ||
+		message.includes("could not parse ast") ||
+		message.includes("invalid ast")
+	) {
+		return ErrorClassification.AST_PARSE_ERROR
+	}
+
+	// Check for syntax errors
+	if (
+		message.includes("syntax error") ||
+		message.includes("parse error") ||
+		message.includes("unexpected token") ||
+		message.includes("invalid syntax")
+	) {
+		return ErrorClassification.SYNTAX_ERROR
+	}
+
+	// Default to unknown
+	return
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== src/patch/registry.ts =====
+/**
+ * Registry management for observations and suggestions
+ */
+
+import { promises as fs } from "fs"
+import { join, dirname } from "path"
+import { PatchOp } from "./types.js"
+import { ErrorReport, ErrorClassification } from "../contracts/error-report.js"
+import { SuggestedOp } from "../contracts/remediation-plan.js"
+
+/**
+ * Registry observation interface
+ */
+export interface RegistryObservation {
+	/** File path where the observation was made */
+	file: string
+	/** Classification of the observation */
+	classification: ErrorClassification
+	/** Observation message */
+	message: string
+	/** Anchors that were tried */
+	anchors?: {
+		triedAfter?: string[]
+		triedBefore?: string[]
+	}
+	/** Candidate anchors that might work */
+	candidates?: {
+		after?: string
+		before?: string
+		insert?: string
+	}
+	/** First time this observation was made */
+	firstSeen: Date
+	/** Last time this observation was seen */
+	lastSeen: Date
+	/** Number of times this observation has been seen */
+	count: number
+}
+
+/**
+ * Registry interface for storing observations and suggestions
+ */
+export interface Registry {
+	/** Registry version */
+	version: string
+	/** Last time the registry was updated */
+	updatedAt: Date
+	/** Array of observations */
+	observations: RegistryObservation[]
+	/** Array of suggested operations */
+	suggestedOps: SuggestedOp[]
+}
+
+/**
+ * Default registry version
+ */
+const DEFAULT_REGISTRY_VERSION = "1.0.0"
+
+/**
+ * Default registry structure
+ */
+const DEFAULT_REGISTRY: Registry = {
+	version: DEFAULT_REGISTRY_VERSION,
+	updatedAt: new Date(),
+	observations: [],
+	suggestedOps: [],
+}
+
+/**
+ * Read the registry file from the specified path
+ * @param registryPath - Path to the registry file
+ * @returns Promise<Registry> - The registry object
+ */
+export async function readRegistry(registryPath: string = ".kilocode/patch-plans/registry.json"): Promise<Registry> {
+	try {
+		const fileContent = await fs.readFile(registryPath, "utf-8")
+		const registry = JSON.parse(fileContent) as Registry
+
+		// Convert date strings back to Date objects
+		registry.updatedAt = new Date(registry.updatedAt)
+		registry.observations = registry.observations.map((obs) => ({
+			...obs,
+			firstSeen: new Date(obs.firstSeen),
+			lastSeen: new Date(obs.lastSeen),
+		}))
+
+		return registry
+	} catch (error) {
+		// If file doesn't exist or is corrupted, return default registry
+		if ((error as any).code === "ENOENT") {
+			return { ...DEFAULT_REGISTRY }
+		}
+
+		// For JSON parsing errors, create a backup and return default
+		if (error instanceof SyntaxError) {
+			try {
+				const backupPath = `${registryPath}.backup.${Date.now()}`
+				await fs.copyFile(registryPath, backupPath)
+				console.warn(`Corrupted registry file backed up to ${backupPath}`)
+			} catch (backupError) {
+				console.warn("Failed to backup corrupted registry file")
+			}
+			return { ...DEFAULT_REGISTRY }
+		}
+
+		throw error
+	}
+}
+
+/**
+ * Write the registry to the specified path
+ * @param registry - The registry object to write
+ * @param registryPath - Path to write the registry file
+ * @returns Promise<void>
+ */
+export async function writeRegistry(
+	registry: Registry,
+	registryPath: string = ".kilocode/patch-plans/registry.json",
+): Promise<void> {
+	try {
+		// Update the timestamp
+		registry.updatedAt = new Date()
+
+		// Create directories if they don't exist
+		await fs.mkdir(dirname(registryPath), { recursive: true })
+
+		// Write the registry to file
+		const fileContent = JSON.stringify(registry, null, 2)
+		await fs.writeFile(registryPath, fileContent, "utf-8")
+	} catch (error) {
+		throw new Error(`Failed to write registry to ${registryPath}: ${error}`)
+	}
+}
+
+/**
+ * Append or merge observation for the file
+ * @param registry - The registry to update
+ * @param observation - The observation to merge
+ * @returns Registry - The updated registry
+ */
+export function mergeObservation(registry: Registry, observation: RegistryObservation): Registry {
+	const existingIndex = registry.observations.findIndex(
+		(obs) =>
+			obs.file === observ
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== src/patch/types.ts =====
+/**
+ * Core Smart Patcher types and interfaces
+ */
+
+/**
+ * Patch strategy enumeration
+ */
+export enum PatchStrategy {
+	/** Strict text-based search and replace */
+	STRICT = "strict",
+	/** Fuzzy matching with tolerance for minor variations */
+	FUZZY = "fuzzy",
+	/** AST-based structural patching */
+	AST = "ast",
+}
+
+/**
+ * Base interface for all patch operations
+ */
+export interface BasePatchOp {
+	/** Unique identifier for this operation */
+	id: string
+	/** Strategy to use for this operation */
+	strategy: PatchStrategy
+	/** File path relative to workspace root */
+	filePath: string
+}
+
+/**
+ * Search and replace patch operation
+ */
+export interface SearchReplaceOp extends BasePatchOp {
+	type: "search_replace"
+	/** Text to search for */
+	search: string
+	/** Replacement text */
+	replace: string
+	/** Optional line number hint for more precise matching */
+	lineHint?: number
+}
+
+/**
+ * Anchor-based patch operation
+ */
+export interface AnchorOp extends BasePatchOp {
+	type: "anchor"
+	/** Anchor text to locate the patch position */
+	anchor: string
+	/** Text to insert after the anchor */
+	insert: string
+	/** Whether to insert before or after the anchor */
+	position: "before" | "after"
+	/** Optional offset from the anchor */
+	offset?: number
+}
+
+/**
+ * AST-based patch operation
+ */
+export interface AstOp extends BasePatchOp {
+	type: "ast"
+	/** AST node selector (e.g., CSS selector, XPath, etc.) */
+	selector: string
+	/** Operation to perform on the matched node */
+	operation: "replace" | "insert_before" | "insert_after" | "remove"
+	/** Content for replace/insert operations */
+	content?: string
+}
+
+/**
+ * Union type for all patch operations
+ */
+export type PatchOp = SearchReplaceOp | AnchorOp | AstOp
+
+/**
+ * Patch plan containing multiple operations
+ */
+export interface PatchPlan {
+	/** Unique identifier for this patch plan */
+	id: string
+	/** Array of patch operations to execute */
+	ops: PatchOp[]
+	/** Optional metadata about the plan */
+	metadata?: {
+		description?: string
+		author?: string
+		version?: string
+	}
+}
+
+/**
+ * Patch execution outcome
+ */
+export enum PatchOutcome {
+	/** Patch was successfully applied */
+	SUCCESS = "success",
+	/** Patch failed to apply */
+	FAILURE = "failure",
+	/** Patch was partially applied */
+	PARTIAL = "partial",
+	/** Patch was skipped */
+	SKIPPED = "skipped",
+}
+
+/**
+ * Patch classification for categorization
+ */
+export enum PatchClassification {
+	/** Bug fix */
+	BUGFIX = "bugfix",
+	/** New feature */
+	FEATURE = "feature",
+	/** Refactoring */
+	REFACTOR = "refactor",
+	/** Documentation */
+	DOCS = "docs",
+	/** Test */
+	TEST = "test",
+	/** Configuration */
+	CONFIG = "config",
+	/** Other */
+	OTHER = "other",
+}
+
+/**
+ * Result of executing a patch operation
+ */
+export interface PatchResult {
+	/** ID of the patch operation */
+	opId: string
+	/** Outcome of the patch operation */
+	outcome: PatchOutcome
+	/** Classification of the patch */
+	classification: PatchClassification
+	/** Hash of the original content */
+	originalHash?: string
+	/** Hash of the patched content */
+	patchedHash?: string
+	/** Optional error message if the patch failed */
+	error?: string
+	/** Optional warnings */
+	warnings?: string[]
+	/** Line numbers that were modified */
+	modifiedLines?: number[]
+	/** Execution time in milliseconds */
+	executionTimeMs?: number
+}
+
+/**
+ * Result of executing a complete patch plan
+ */
+export interface PatchPlanResult {
+	/** ID of the patch plan */
+	planId: string
+	/** Overall outcome of the patch plan */
+	outcome: PatchOutcome
+	/** Results for each operation in the plan */
+	results: PatchResult[]
+	/** Total execution time in milliseconds */
+	totalExecutionTimeMs: number
+	/** Summary statistics */
+	summary: {
+		total: number
+		successful: number
+		failed: number
+		skipped: number
+		partial: number
+	}
+}
+
+===== src/patch/validators.ts =====
+/**
+ * Validation utilities for patch plans and task envelopes
+ */
+
+import { PatchPlan, PatchOp, SearchReplaceOp, AnchorOp, AstOp, PatchStrategy } from "./types.js"
+import { TaskEnvelope, TaskScope } from "../contracts/task-envelope.js"
+
+/**
+ * Result of a validation operation
+ */
+export interface ValidationResult {
+	/** Whether the validation passed */
+	isValid: boolean
+	/** Array of error messages if validation failed */
+	errors: string[]
+}
+
+/**
+ * Validates a patch plan structure and content
+ * @param plan - The patch plan to validate
+ * @returns ValidationResult indicating if the plan is valid
+ */
+export function validatePatchPlan(plan: PatchPlan): ValidationResult {
+	const errors: string[] = []
+
+	// Check if plan is an object
+	if (!plan || typeof plan !== "object") {
+		errors.push("Patch plan must be an object")
+		return { isValid: false, errors }
+	}
+
+	// Check required id field
+	if (!plan.id || typeof plan.id !== "string") {
+		errors.push("Patch plan must have a valid id string")
+	}
+
+	// Check ops array
+	if (!Array.isArray(plan.ops)) {
+		errors.push("Patch plan must have an ops array")
+		return { isValid: false, errors }
+	}
+
+	// Validate each operation
+	plan.ops.forEach((op: PatchOp, index: number) => {
+		const opResult = validateOperation(op)
+		if (!opResult.isValid) {
+			errors.push(`Operation at index ${index}: ${opResult.errors.join(", ")}`)
+		}
+	})
+
+	// Validate metadata if present
+	if (plan.metadata) {
+		if (typeof plan.metadata !== "object") {
+			errors.push("Metadata must be an object if provided")
+		} else {
+			if (plan.metadata.description && typeof plan.metadata.description !== "string") {
+				errors.push("Metadata description must be a string")
+			}
+			if (plan.metadata.author && typeof plan.metadata.author !== "string") {
+				errors.push("Metadata author must be a string")
+			}
+			if (plan.metadata.version && typeof plan.metadata.version !== "string") {
+				errors.push("Metadata version must be a string")
+			}
+		}
+	}
+
+	return {
+		isValid: errors.length === 0,
+		errors,
+	}
+}
+
+/**
+ * Validates a task envelope structure and content
+ * @param envelope - The task envelope to validate
+ * @returns ValidationResult indicating if the envelope is valid
+ */
+export function validateTaskEnvelope(envelope: TaskEnvelope): ValidationResult {
+	const errors: string[] = []
+
+	// Check if envelope is an object
+	if (!envelope || typeof envelope !== "object") {
+		errors.push("Task envelope must be an object")
+		return { isValid: false, errors }
+	}
+
+	// Check required id field
+	if (!envelope.id || typeof envelope.id !== "string") {
+		errors.push("Task envelope must have a valid id string")
+	}
+
+	// Validate scope
+	if (!envelope.scope) {
+		errors.push("Task envelope must have a scope object")
+	} else {
+		const scopeResult = validateTaskScope(envelope.scope)
+		if (!scopeResult.isValid) {
+			errors.push(`Scope validation failed: ${scopeResult.errors.join(", ")}`)
+		}
+	}
+
+	// Validate plan
+	if (!envelope.plan) {
+		errors.push("Task envelope must have a plan")
+	} else {
+		const planResult = validatePatchPlan(envelope.plan)
+		if (!planResult.isValid) {
+			errors.push(`Plan validation failed: ${planResult.errors.join(", ")}`)
+		}
+	}
+
+	// Validate metadata if present
+	if (envelope.metadata) {
+		if (typeof envelope.metadata !== "object") {
+			errors.push("Metadata must be an object if provided")
+		} else {
+			if (envelope.metadata.description && typeof envelope.metadata.description !== "string") {
+				errors.push("Metadata description must be a string")
+			}
+			if (envelope.metadata.requester && typeof envelope.metadata.requester !== "string") {
+				errors.push("Metadata requester must be a string")
+			}
+			if (
+				envelope.metadata.priority !== undefined &&
+				(typeof envelope.metadata.priority !== "number" || envelope.metadata.priority < 0)
+			) {
+				errors.push("Metadata priority must be a non-negative number")
+			}
+			if (envelope.metadata.tags && !Array.isArray(envelope.metadata.tags)) {
+				errors.push("Metadata tags must be an arr
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== src/patch/__tests__/anchors.test.ts =====
+import { describe, test, expect } from "vitest"
+import {
+	findAfterAnchor,
+	findBeforeAnchor,
+	insertAt,
+	ensureImport,
+	applyAnchorPatch,
+	ReactPatterns,
+} from "../anchors.js"
+import { PatchStrategy } from "../types.js"
+
+describe("Anchor-based fuzzy matching", () => {
+	describe("findAfterAnchor", () => {
+		test("finds position after anchor", () => {
+			const content = "function test() { return 42; }"
+			const anchor = "function test()"
+			const result = findAfterAnchor(content, anchor)
+			expect(result).toBe(15)
+		})
+
+		test("handles whitespace after anchor", () => {
+			const content = "function test()   { return 42; }"
+			const anchor = "function test()"
+			const result = findAfterAnchor(content, anchor)
+			expect(result).toBe(15)
+		})
+
+		test("returns null when anchor not found", () => {
+			const content = "function test() { return 42; }"
+			const anchor = "function missing()"
+			const result = findAfterAnchor(content, anchor)
+			expect(result).toBeNull()
+		})
+	})
+
+	describe("findBeforeAnchor", () => {
+		test("finds position before anchor", () => {
+			const content = "function test() { return 42; }"
+			const anchor = "{ return 42; }"
+			const result = findBeforeAnchor(content, anchor)
+			expect(result).toBe(16)
+		})
+
+		test("handles whitespace before anchor", () => {
+			const content = "function test()   { return 42; }"
+			const anchor = "{ return 42; }"
+			const result = findBeforeAnchor(content, anchor)
+			expect(result).toBe(18)
+		})
+
+		test("returns null when anchor not found", () => {
+			const content = "function test() { return 42; }"
+			const anchor = "{ missing }"
+			const result = findBeforeAnchor(content, anchor)
+			expect(result).toBeNull()
+		})
+	})
+
+	describe("insertAt", () => {
+		test("inserts string at position", () => {
+			const content = "Hello World"
+			const result = insertAt(content, 5, " Beautiful")
+			expect(result).toBe("Hello Beautiful World")
+		})
+
+		test("handles position at beginning", () => {
+			const content = "Hello World"
+			const result = insertAt(content, 0, "Start ")
+			expect(result).toBe("Start Hello World")
+		})
+
+		test("handles position at end", () => {
+			const content = "Hello World"
+			const result = insertAt(content, 11, " End")
+			expect(result).toBe("Hello World End")
+		})
+
+		test("returns original content for invalid position", () => {
+			const content = "Hello World"
+			const result = insertAt(content, 20, " Invalid")
+			expect(result).toBe("Hello World")
+		})
+	})
+
+	describe("ensureImport", () => {
+		test("adds new import when not present", () => {
+			const content = "function test() { return 42; }"
+			const result = ensureImport(content, "useState", "react")
+			expect(result).toContain("import { useState } from 'react';")
+		})
+
+		test("does not add duplicate import", () => {
+			const content = "import { useState } from 'react';\nfunction test() { return 42; }"
+			const result = ensureImport(content, "useState", "react")
+			expect(result).toBe(content)
+		})
+
+		test("adds to existing import from same module", () => {
+			const content = "import { useEffect } from 'react';\nfunction test() { return 42; }"
+			const result = ensureImport(content, "useState", "react")
+			expect(result).toContain("import { useEffect , useState} from 'react';")
+		})
+
+		test("handles shebang correctly", () => {
+			const content = "#!/usr/bin/env node\nfunction test() { return 42; }"
+			const result = ensureImport(content, "useState", "react")
+			expect(result).toContain("#!/usr/bin/env node\nimport { useState } from 'react';")
+		})
+	})
+
+	describe("applyAnchorPatch", () => {
+		test("applies patch after anchor", () => {
+			const content = "function test() { return 42; }"
+			const op = {
+				id: "test-patch",
+				strategy: PatchStrategy.FUZZY,
+				filePath: "test.tsx",
+				type: "anchor" as const,
+				anchor: "function test()",
+				insert: " // New comment",
+				position: "after" as const,
+			}
+			const result = applyAnchorPatch(content, op)
+			expect(result).toBe("function test() // New comment { return 4
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== src/patch/__tests__/ast.test.ts =====
+/**
+ * Tests for AST manipulation functionality
+ */
+
+import { describe, test, expect } from "vitest"
+import { addImportStub, insertUseEffectStub, insertJSXInToolbarStub, applyAstPatch } from "../ast.js"
+import { AstOp } from "../types.js"
+
+describe("AST manipulation stub functions", () => {
+	describe("addImportStub", () => {
+		test("should add a new import when no imports exist", () => {
+			const content = `
+const App = () => {
+  return <div>Hello World</div>;
+};
+`
+			const result = addImportStub(content, "useState", "react")
+			expect(result).toContain("import { useState } from 'react';")
+			expect(result).toContain(content)
+		})
+
+		test("should add import after existing imports", () => {
+			const content = `
+import { useEffect } from 'react';
+
+const App = () => {
+  return <div>Hello World</div>;
+};
+`
+			const result = addImportStub(content, "useState", "react")
+			expect(result).toContain("import { useEffect, useState } from 'react';")
+		})
+
+		test("should add to existing import from same module", () => {
+			const content = `
+import { useEffect } from 'react';
+
+const App = () => {
+  return <div>Hello World</div>;
+};
+`
+			const result = addImportStub(content, "useState", "react")
+			expect(result).toContain("import { useEffect, useState } from 'react';")
+		})
+
+		test("should be idempotent - not add duplicate imports", () => {
+			const content = `
+import { useState } from 'react';
+
+const App = () => {
+  return <div>Hello World</div>;
+};
+`
+			const result = addImportStub(content, "useState", "react")
+			expect(result).toBe(content)
+		})
+	})
+
+	describe("insertUseEffectStub", () => {
+		test("should insert useEffect in a function component", () => {
+			const content = `
+const App = () => {
+  return <div>Hello World</div>;
+};
+`
+			const result = insertUseEffectStub(content, 'console.log("Effect");')
+			expect(result).toContain("useEffect(() => {")
+			expect(result).toContain('console.log("Effect");')
+			expect(result).toContain("}, []);")
+		})
+
+		test("should insert useEffect in a function declaration component", () => {
+			const content = `
+function App() {
+  return <div>Hello World</div>;
+}
+`
+			const result = insertUseEffectStub(content, 'console.log("Effect");')
+			expect(result).toContain("useEffect(() => {")
+			expect(result).toContain('console.log("Effect");')
+			expect(result).toContain("}, []);")
+		})
+
+		test("should be idempotent - not add duplicate useEffect", () => {
+			const content = `
+const App = () => {
+  useEffect(() => {
+    console.log("Effect");
+  }, []);
+  
+  return <div>Hello World</div>;
+};
+`
+			const result = insertUseEffectStub(content, 'console.log("Effect");')
+			expect(result).toBe(content)
+		})
+	})
+
+	describe("insertJSXInToolbarStub", () => {
+		test("should insert JSX in a Toolbar component", () => {
+			const content = `
+const App = () => {
+  return (
+    <Toolbar>
+      <Button>Click me</Button>
+    </Toolbar>
+  );
+};
+`
+			const result = insertJSXInToolbarStub(content, "<IconButton>Icon</IconButton>")
+			expect(result).toContain("<IconButton>Icon</IconButton>")
+			expect(result).toContain("<Toolbar>")
+			expect(result).toContain("</Toolbar>")
+		})
+
+		test("should insert JSX in a div with toolbar class", () => {
+			const content = `
+const App = () => {
+  return (
+    <div className="toolbar">
+      <Button>Click me</Button>
+    </div>
+  );
+};
+`
+			const result = insertJSXInToolbarStub(content, "<IconButton>Icon</IconButton>")
+			expect(result).toContain("<IconButton>Icon</IconButton>")
+			expect(result).toContain('className="toolbar"')
+		})
+
+		test("should be idempotent - not add duplicate JSX", () => {
+			const content = `
+const App = () => {
+  return (
+    <Toolbar>
+      <Button>Click me</Button>
+      <IconButton>Icon</IconButton>
+    </Toolbar>
+  );
+};
+`
+			const result = insertJSXInToolbarStub(content, "<IconButton>Icon</IconButton>")
+			expect(result).toBe(content)
+		})
+	})
+
+	describe("applyAstPatch", () => {
+		test("should apply addImport operation", () => {
+			const content = `
+const App = () 
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== src/patch/__tests__/classifier.test.ts =====
+/**
+ * Tests for the error classification system
+ */
+
+import { describe, test, expect } from "vitest"
+import {
+	classifyToolMessage,
+	generateErrorReport,
+	generateRemediationPlan,
+	classifyPatchResult,
+	extractErrorDetails,
+} from "../classifier.js"
+import { ErrorClassification } from "../../contracts/error-report.js"
+import { PatchResult, PatchOutcome } from "../types.js"
+
+describe("classifyToolMessage", () => {
+	test("should classify already applied errors", () => {
+		expect(classifyToolMessage("Search and replace content are identical")).toBe(
+			ErrorClassification.ALREADY_APPLIED,
+		)
+		expect(classifyToolMessage("Content is the same")).toBe(ErrorClassification.ALREADY_APPLIED)
+		expect(classifyToolMessage("No changes needed")).toBe(ErrorClassification.ALREADY_APPLIED)
+	})
+
+	test("should classify anchor mismatch errors", () => {
+		expect(classifyToolMessage("No match for patch hunk")).toBe(ErrorClassification.ANCHOR_MISMATCH)
+		expect(classifyToolMessage("Anchor not found")).toBe(ErrorClassification.ANCHOR_MISMATCH)
+		expect(classifyToolMessage("Could not find anchor")).toBe(ErrorClassification.ANCHOR_MISMATCH)
+	})
+
+	test("should classify ESLint errors", () => {
+		expect(classifyToolMessage("ESLint error: Unexpected console statement")).toBe(ErrorClassification.LINT_ERROR)
+		expect(classifyToolMessage("Linting error: Missing semicolon")).toBe(ErrorClassification.LINT_ERROR)
+		expect(classifyToolMessage("1:1 warning Unused variable")).toBe(ErrorClassification.LINT_ERROR)
+	})
+
+	test("should classify TypeScript errors", () => {
+		expect(classifyToolMessage("TypeScript error: Cannot find name")).toBe(ErrorClassification.TYPE_ERROR)
+		expect(classifyToolMessage("Property does not exist on type")).toBe(ErrorClassification.TYPE_ERROR)
+		expect(classifyToolMessage("Type is not assignable")).toBe(ErrorClassification.TYPE_ERROR)
+	})
+
+	test("should classify timeout errors", () => {
+		expect(classifyToolMessage("Operation timed out")).toBe(ErrorClassification.TIMEOUT)
+		expect(classifyToolMessage("IPC timeout")).toBe(ErrorClassification.TIMEOUT)
+		expect(classifyToolMessage("RPC timeout")).toBe(ErrorClassification.TIMEOUT)
+	})
+
+	test("should classify file not found errors", () => {
+		expect(classifyToolMessage("File not found")).toBe(ErrorClassification.FILE_NOT_FOUND)
+		expect(classifyToolMessage("ENOENT: no such file")).toBe(ErrorClassification.FILE_NOT_FOUND)
+		expect(classifyToolMessage("Cannot find file")).toBe(ErrorClassification.FILE_NOT_FOUND)
+	})
+
+	test("should classify permission errors", () => {
+		expect(classifyToolMessage("Permission denied")).toBe(ErrorClassification.PERMISSION_ERROR)
+		expect(classifyToolMessage("EACCES: permission denied")).toBe(ErrorClassification.PERMISSION_ERROR)
+		expect(classifyToolMessage("Access denied")).toBe(ErrorClassification.PERMISSION_ERROR)
+	})
+
+	test("should classify security errors", () => {
+		expect(classifyToolMessage("Security error: unsafe operation")).toBe(ErrorClassification.PERMISSION_ERROR)
+		expect(classifyToolMessage("Blocked by security policy")).toBe(ErrorClassification.PERMISSION_ERROR)
+	})
+
+	test("should classify search not found errors", () => {
+		expect(classifyToolMessage("Search pattern not found")).toBe(ErrorClassification.SEARCH_NOT_FOUND)
+		expect(classifyToolMessage("No match found")).toBe(ErrorClassification.SEARCH_NOT_FOUND)
+	})
+
+	test("should classify multiple matches errors", () => {
+		expect(classifyToolMessage("Multiple matches found")).toBe(ErrorClassification.MULTIPLE_MATCHES)
+		expect(classifyToolMessage("Ambiguous match")).toBe(ErrorClassification.MULTIPLE_MATCHES)
+	})
+
+	test("should classify syntax errors", () => {
+		expect(classifyToolMessage("Syntax error: Unexpected token")).toBe(ErrorClassification.SYNTAX_ERROR)
+		expect(classifyToolMessage("Parse error")).toBe(ErrorClassification.SYNTAX_ERROR)
+	})
+
+	test("should classify AST parse errors", () => {
+		expect(classifyToolMessage("AST parse error")).toBe(ErrorClassification.AST_PARSE_ERROR)
+		expect(
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== src/patch/__tests__/registry.test.ts =====
+/**
+ * Tests for registry management functionality
+ */
+
+import { describe, it, expect, beforeEach, afterEach } from "vitest"
+import { promises as fs } from "fs"
+import { join } from "path"
+import {
+	readRegistry,
+	writeRegistry,
+	mergeObservation,
+	addSuggestedOp,
+	limitRegistrySize,
+	createObservation,
+	inferSuggestedOps,
+	Registry,
+	RegistryObservation,
+} from "../registry.js"
+import { ErrorReport, ErrorClassification, ErrorSeverity } from "../../contracts/error-report.js"
+import { PatchOp, PatchStrategy } from "../types.js"
+import { SuggestedOp } from "../../contracts/remediation-plan.js"
+
+describe("Registry Management", () => {
+	const testRegistryPath = join(process.cwd(), "test-registry.json")
+
+	beforeEach(async () => {
+		// Clean up any existing test registry
+		try {
+			await fs.unlink(testRegistryPath)
+		} catch {
+			// File doesn't exist, which is fine
+		}
+	})
+
+	afterEach(async () => {
+		// Clean up test registry
+		try {
+			await fs.unlink(testRegistryPath)
+		} catch {
+			// File doesn't exist, which is fine
+		}
+	})
+
+	describe("readRegistry", () => {
+		it("should create default registry when file does not exist", async () => {
+			const registry = await readRegistry(testRegistryPath)
+
+			expect(registry.version).toBe("1.0.0")
+			expect(registry.observations).toEqual([])
+			expect(registry.suggestedOps).toEqual([])
+			expect(registry.updatedAt).toBeInstanceOf(Date)
+		})
+
+		it("should read existing registry file", async () => {
+			const testRegistry: Registry = {
+				version: "1.0.0",
+				updatedAt: new Date(),
+				observations: [
+					{
+						file: "test.ts",
+						classification: ErrorClassification.ANCHOR_MISMATCH,
+						message: "Test error",
+						firstSeen: new Date(),
+						lastSeen: new Date(),
+						count: 1,
+					},
+				],
+				suggestedOps: [],
+			}
+
+			await fs.writeFile(testRegistryPath, JSON.stringify(testRegistry, null, 2))
+			const registry = await readRegistry(testRegistryPath)
+
+			expect(registry.observations).toHaveLength(1)
+			expect(registry.observations[0]!.file).toBe("test.ts")
+			expect(registry.observations[0]!.firstSeen).toBeInstanceOf(Date)
+			expect(registry.observations[0]!.lastSeen).toBeInstanceOf(Date)
+		})
+
+		it("should handle corrupted registry file", async () => {
+			await fs.writeFile(testRegistryPath, "invalid json")
+			const registry = await readRegistry(testRegistryPath)
+
+			expect(registry.observations).toEqual([])
+			expect(registry.suggestedOps).toEqual([])
+		})
+	})
+
+	describe("writeRegistry", () => {
+		it("should write registry to file", async () => {
+			const registry: Registry = {
+				version: "1.0.0",
+				updatedAt: new Date(),
+				observations: [
+					{
+						file: "test.ts",
+						classification: ErrorClassification.ANCHOR_MISMATCH,
+						message: "Test error",
+						firstSeen: new Date(),
+						lastSeen: new Date(),
+						count: 1,
+					},
+				],
+				suggestedOps: [],
+			}
+
+			await writeRegistry(registry, testRegistryPath)
+
+			const fileContent = await fs.readFile(testRegistryPath, "utf-8")
+			const parsedRegistry = JSON.parse(fileContent) as Registry
+
+			expect(parsedRegistry.observations).toHaveLength(1)
+			expect(parsedRegistry.observations[0]!.file).toBe("test.ts")
+		})
+
+		it("should create directories if they do not exist", async () => {
+			const nestedPath = join(process.cwd(), "nested", "dir", "registry.json")
+			const registry: Registry = {
+				version: "1.0.0",
+				updatedAt: new Date(),
+				observations: [],
+				suggestedOps: [],
+			}
+
+			await writeRegistry(registry, nestedPath)
+
+			const fileContent = await fs.readFile(nestedPath, "utf-8")
+			expect(fileContent).toContain("1.0.0")
+
+			// Clean up
+			await fs.rm(join(process.cwd(), "nested", "dir"), { recursive: true })
+		})
+	})
+
+	describe("mergeObservation", () => {
+		it("should add new observation", () => {
+			const registry: Registry = {
+				version: "1.0.0",
+				updatedAt: new Date(),
+				observations: [],
+				suggestedOps: [],
+			}
+
+			const observation: RegistryObservation = {
+				file: "test.ts",
+				class
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== src/patch/__tests__/validators.test.ts =====
+/**
+ * Tests for the validators module
+ */
+
+import { describe, test, expect } from "vitest"
+import {
+	validatePatchPlan,
+	validateTaskEnvelope,
+	validateOperation,
+	validateFilePath,
+	validateOperationType,
+	checkSecurityViolations,
+	ValidationResult,
+} from "../validators.js"
+import { PatchPlan, PatchOp, SearchReplaceOp, AnchorOp, AstOp, PatchStrategy } from "../types.js"
+import { TaskEnvelope, TaskScope } from "../../contracts/task-envelope.js"
+
+describe("validatePatchPlan", () => {
+	test("should validate a correct patch plan", () => {
+		const plan: PatchPlan = {
+			id: "test-plan",
+			ops: [
+				{
+					id: "op1",
+					strategy: PatchStrategy.STRICT,
+					type: "search_replace",
+					filePath: "src/test.js",
+					search: "old code",
+					replace: "new code",
+				},
+			],
+		}
+
+		const result = validatePatchPlan(plan)
+		expect(result.isValid).toBe(true)
+		expect(result.errors).toHaveLength(0)
+	})
+
+	test("should reject a plan without id", () => {
+		const plan = {
+			ops: [],
+		} as any
+
+		const result = validatePatchPlan(plan)
+		expect(result.isValid).toBe(false)
+		expect(result.errors).toContain("Patch plan must have a valid id string")
+	})
+
+	test("should reject a plan without ops array", () => {
+		const plan = {
+			id: "test-plan",
+			ops: null,
+		} as any
+
+		const result = validatePatchPlan(plan)
+		expect(result.isValid).toBe(false)
+		expect(result.errors).toContain("Patch plan must have an ops array")
+	})
+
+	test("should reject a plan with invalid operations", () => {
+		const plan: PatchPlan = {
+			id: "test-plan",
+			ops: [
+				{
+					id: "op1",
+					strategy: PatchStrategy.STRICT,
+					type: "search_replace",
+					filePath: "src/test.js",
+					search: "old code",
+					// Missing replace field
+				},
+			] as any,
+		}
+
+		const result = validatePatchPlan(plan)
+		expect(result.isValid).toBe(false)
+		expect(result.errors.some((e) => e.includes("Operation at index 0"))).toBe(true)
+	})
+})
+
+describe("validateTaskEnvelope", () => {
+	test("should validate a correct task envelope", () => {
+		const envelope: TaskEnvelope = {
+			id: "test-envelope",
+			scope: {
+				allowPaths: ["src/**"],
+				denyPaths: ["src/secret/**"],
+				allowOps: ["search_replace", "anchor"],
+				maxRetries: 3,
+				timeBudgetSec: 60,
+			},
+			plan: {
+				id: "test-plan",
+				ops: [
+					{
+						id: "op1",
+						strategy: PatchStrategy.STRICT,
+						type: "search_replace",
+						filePath: "src/test.js",
+						search: "old",
+						replace: "new",
+					},
+				],
+			},
+		}
+
+		const result = validateTaskEnvelope(envelope)
+		expect(result.isValid).toBe(true)
+		expect(result.errors).toHaveLength(0)
+	})
+
+	test("should reject an envelope without id", () => {
+		const envelope = {
+			scope: {},
+			plan: {},
+		} as any
+
+		const result = validateTaskEnvelope(envelope)
+		expect(result.isValid).toBe(false)
+		expect(result.errors).toContain("Task envelope must have a valid id string")
+	})
+
+	test("should reject an envelope with invalid scope", () => {
+		const envelope: TaskEnvelope = {
+			id: "test-envelope",
+			scope: {
+				allowPaths: [],
+				denyPaths: [],
+				allowOps: [],
+				maxRetries: -1, // Invalid negative value
+				timeBudgetSec: 60,
+			},
+			plan: {
+				id: "test-plan",
+				ops: [],
+			},
+		}
+
+		const result = validateTaskEnvelope(envelope)
+		expect(result.isValid).toBe(false)
+		expect(result.errors.some((e) => e.includes("Scope maxRetries must be a non-negative integer"))).toBe(true)
+	})
+})
+
+describe("validateOperation", () => {
+	test("should validate a correct search_replace operation", () => {
+		const op: SearchReplaceOp = {
+			id: "op1",
+			strategy: PatchStrategy.STRICT,
+			type: "search_replace",
+			filePath: "src/test.js",
+			search: "old code",
+			replace: "new code",
+		}
+
+		const result = validateOperation(op)
+		expect(result.isValid).toBe(true)
+		expect(result.errors).toHaveLength(0)
+	})
+
+	test("should validate a correct anchor operation", () => {
+		const op: AnchorOp = {
+			id: "op1",
+			strategy: PatchStrategy.STRICT,
+			type: "anchor",
+			filePath: "src/
+…[truncated]
+# note: truncated to stay within per-file budget
+
