@@ -50,6 +50,7 @@ import {
 	type EditQueuedMessagePayload,
 	checkoutDiffPayloadSchema,
 	checkoutRestorePayloadSchema,
+	requestCheckpointRestoreApprovalPayloadSchema,
 } from "../../shared/WebviewMessage"
 import { checkExistKey } from "../../shared/checkExistApiConfig"
 import { experimentDefault } from "../../shared/experiments"
@@ -1102,6 +1103,28 @@ export const webviewMessageHandler = async (
 			break
 		}
 		// kilocode_change end
+		case "requestCheckpointRestoreApproval": {
+			const result = requestCheckpointRestoreApprovalPayloadSchema.safeParse(message.payload)
+
+			if (result.success) {
+				const { commitHash, checkpointTs, messagesToRemove, confirmationText } = result.data
+				const task = provider.getCurrentTask()
+
+				if (task) {
+					task.ask(
+						"checkpoint_restore",
+						JSON.stringify({
+							commitHash,
+							checkpointTs,
+							messagesToRemove,
+							confirmationText,
+						}),
+					)
+				}
+			}
+
+			break
+		}
 		case "checkpointRestore": {
 			const result = checkoutRestorePayloadSchema.safeParse(message.payload)
 
