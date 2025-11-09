@@ -1111,15 +1111,20 @@ export const webviewMessageHandler = async (
 				const task = provider.getCurrentTask()
 
 				if (task) {
-					task.ask(
-						"checkpoint_restore",
-						JSON.stringify({
+					const askMessage = {
+						ts: Date.now(),
+						type: "ask" as const,
+						ask: "checkpoint_restore" as const,
+						text: JSON.stringify({
 							commitHash,
 							checkpointTs,
 							messagesToRemove,
 							confirmationText,
 						}),
-					)
+					}
+
+					task.clineMessages.push(askMessage)
+					await provider.postStateToWebview()
 				}
 			}
 
