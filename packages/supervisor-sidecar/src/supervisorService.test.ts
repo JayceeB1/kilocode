@@ -7,7 +7,7 @@ vi.mock("vscode", () => ({
 	workspace: {
 		getConfiguration: vi.fn(() => ({
 			get: vi.fn((key: string, defaultValue: unknown) => {
-				if (key === "serviceUrl") return "http://localhost:43110"
+				if (key === "serviceUrl") return "http://localhost:9611"
 				return defaultValue
 			}),
 		})),
@@ -46,7 +46,7 @@ describe("SupervisorService", () => {
 	})
 
 	test("should initialize with correct service URL", () => {
-		expect(service["serviceUrl"]).toBe("http://localhost:43110")
+		expect(service["serviceUrl"]).toBe("http://localhost:9611")
 	})
 
 	test("should test connection successfully", async () => {
@@ -64,7 +64,7 @@ describe("SupervisorService", () => {
 						provider: "ollama",
 						model: "llama3.1:8b-instruct-q4",
 						bind: "127.0.0.1",
-						port: 43110,
+						port: 9611,
 					},
 				},
 			}),

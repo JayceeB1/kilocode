@@ -1,5 +1,6 @@
 import { Request, Response } from "express"
 import { getConfig } from "./config.js"
+import { analyzeWithLLM } from "./llm/index.js"
 
 export interface AnalyzeRequest {
 	code: string
@@ -46,32 +47,25 @@ export async function analyzeCode(req: Request, res: Response): Promise<void> {
 
 		const config = getConfig()
 
-		// For now, return a mock analysis
-		// In a real implementation, this would call the LLM provider
-		const mockAnalysis: AnalyzeResponse = {
-			analysis: {
-				issues: [
-					{
-						type: "syntax",
-						severity: "warning",
-						message: "Potential syntax issue detected",
-						line: 1,
-						suggestion: "Check for missing semicolons or brackets",
-						confidence: 0.8,
-					},
-				],
-				suggestions: ["Consider adding type annotations", "Review error handling patterns"],
-				fixedCode: code, // Would contain actual fixes in real implementation
-			},
+		// Extract optional parameters from request body
+		const language = typeof rawBody.language === "string" ? rawBody.language : undefined
+		const filePath = typeof rawBody.filePath === "string" ? rawBody.filePath : undefined
+		const context = typeof rawBody.context === "string" ? rawBody.context : undefined
+
+		// Use LLM for analysis
+		const llmAnalysis = await analyzeWithLLM(code, language, filePath, context)
+
+		const analysisResponse: AnalyzeResponse = {
+			analysis: llmAnalysis,
 			metadata: {
 				model: config.model,
 				provider: config.provider,
-				tokensUsed: 150,
+				tokensUsed: undefined, // Ollama doesn't provide token count by default
 				processingTime: Date.now() - startTime,
 			},
 		}
 
-		res.json(mockAnalysis)
+		res.json(analysisResponse)
 	} catch (error) {
 		console.error("Analysis error:", error)
 		res.status(500).json({

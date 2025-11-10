@@ -62,7 +62,7 @@ export class SupervisorService {
 
 	private loadServiceUrl(): string {
 		const config = vscode.workspace.getConfiguration("kilo-code.supervisor")
-		return config.get<string>("serviceUrl", "http://127.0.0.1:43110")
+		return config.get<string>("serviceUrl", "http://127.0.0.1:9611")
 	}
 
 	private setupConfigWatcher(): void {

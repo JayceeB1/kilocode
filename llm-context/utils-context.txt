@@ -1,0 +1,4044 @@
+# Context digest for webview-ui/src/utils# Files considered: 52# Max chars per file: 4000# Max chars per digest: 160000===== TelemetryClient.ts =====
+import posthog from "posthog-js"
+
+import type { TelemetrySetting } from "@roo-code/types"
+
+class TelemetryClient {
+	private static instance: TelemetryClient
+	private static telemetryEnabled: boolean = false
+
+	public updateTelemetryState(telemetrySetting: TelemetrySetting, apiKey?: string, distinctId?: string) {
+		posthog.reset()
+
+		if (telemetrySetting !== "disabled" && apiKey && distinctId) {
+			TelemetryClient.telemetryEnabled = true
+
+			posthog.init(apiKey, {
+				api_host: "https://us.i.posthog.com",
+				persistence: "localStorage",
+				loaded: () => posthog.identify(distinctId),
+				capture_pageview: false,
+				capture_pageleave: false,
+				autocapture: false,
+			})
+
+			posthog.identify(distinctId) // kilocode_change: loaded above only works the first time
+		} else {
+			TelemetryClient.telemetryEnabled = false
+		}
+	}
+
+	public static getInstance(): TelemetryClient {
+		if (!TelemetryClient.instance) {
+			TelemetryClient.instance = new TelemetryClient()
+		}
+
+		return TelemetryClient.instance
+	}
+
+	// kilocode_change start
+	public captureException(error: Error, properties?: Record<string, any>) {
+		if (TelemetryClient.telemetryEnabled) {
+			try {
+				posthog.captureException(error, properties)
+			} catch (_error) {
+				// Silently fail if there's an error capturing an event.
+			}
+		}
+	}
+	// kilocode_change end
+
+	public capture(eventName: string, properties?: Record<string, any>) {
+		if (TelemetryClient.telemetryEnabled) {
+			try {
+				posthog.capture(eventName, properties)
+			} catch (_error) {
+				// Silently fail if there's an error capturing an event.
+			}
+		}
+	}
+}
+
+export const telemetryClient = TelemetryClient.getInstance()
+
+===== clipboard.ts =====
+import { useState, useCallback, useEffect, useRef } from "react"
+
+/**
+ * Options for copying text to clipboard
+ */
+interface CopyOptions {
+	/** Duration in ms to show success feedback (default: 2000) */
+	feedbackDuration?: number
+	/** Optional callback when copy succeeds */
+	onSuccess?: () => void
+	/** Optional callback when copy fails */
+	onError?: (error: Error) => void
+}
+
+/**
+ * Copy text to clipboard with error handling
+ */
+export const copyToClipboard = async (text: string, options?: CopyOptions): Promise<boolean> => {
+	try {
+		await navigator.clipboard.writeText(text)
+		options?.onSuccess?.()
+		return true
+	} catch (error) {
+		const err = error instanceof Error ? error : new Error("Failed to copy to clipboard")
+		options?.onError?.(err)
+		console.error("Failed to copy to clipboard:", err)
+		return false
+	}
+}
+
+/**
+ * React hook for managing clipboard copy state with feedback
+ */
+export const useCopyToClipboard = (feedbackDuration = 2000) => {
+	const [showCopyFeedback, setShowCopyFeedback] = useState(false)
+	const timeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+	const copyWithFeedback = useCallback(
+		async (text: string, e?: React.MouseEvent) => {
+			e?.stopPropagation()
+
+			// Clear any existing timeout
+			if (timeoutRef.current) {
+				clearTimeout(timeoutRef.current)
+			}
+
+			const success = await copyToClipboard(text, {
+				onSuccess: () => {
+					setShowCopyFeedback(true)
+					timeoutRef.current = setTimeout(() => {
+						setShowCopyFeedback(false)
+						timeoutRef.current = null
+					}, feedbackDuration)
+				},
+			})
+
+			return success
+		},
+		[feedbackDuration],
+	)
+
+	// Cleanup timeout on unmount
+	useEffect(() => {
+		return () => {
+			if (timeoutRef.current) {
+				clearTimeout(timeoutRef.current)
+			}
+		}
+	}, [])
+
+	return {
+		showCopyFeedback,
+		copyWithFeedback,
+	}
+}
+
+===== command-parser.ts =====
+import { parse } from "shell-quote"
+
+/**
+ * Extract command patterns from a command string.
+ * Returns at most 3 levels: base command, command + first argument, and command + first two arguments.
+ * Stops at flags (-), paths (/\~), file extensions (.ext), or special characters (:).
+ */
+export function extractPatternsFromCommand(command: string): string[] {
+	if (!command?.trim()) return []
+
+	const patterns = new Set<string>()
+
+	try {
+		const parsed = parse(command)
+		const commandSeparators = new Set(["|", "&&", "||", ";"])
+		let currentTokens: string[] = []
+
+		for (const token of parsed) {
+			if (typeof token === "object" && "op" in token && commandSeparators.has(token.op)) {
+				// Process accumulated tokens as a command
+				if (currentTokens.length > 0) {
+					extractFromTokens(currentTokens, patterns)
+					currentTokens = []
+				}
+			} else if (typeof token === "string") {
+				currentTokens.push(token)
+			}
+		}
+
+		// Process any remaining tokens
+		if (currentTokens.length > 0) {
+			extractFromTokens(currentTokens, patterns)
+		}
+	} catch (error) {
+		console.warn("Failed to parse command:", error)
+		// Fallback: just extract the first word
+		const firstWord = command.trim().split(/\s+/)[0]
+		if (firstWord) patterns.add(firstWord)
+	}
+
+	return Array.from(patterns).sort()
+}
+
+function extractFromTokens(tokens: string[], patterns: Set<string>): void {
+	if (tokens.length === 0 || typeof tokens[0] !== "string") return
+
+	const mainCmd = tokens[0]
+
+	// Skip numeric commands like "0" from "0 total"
+	if (/^\d+$/.test(mainCmd)) return
+
+	patterns.add(mainCmd)
+
+	// Breaking expressions that indicate we should stop looking for subcommands
+	const breakingExps = [/^-/, /[\\/:.~ ]/]
+
+	// Extract up to 3 levels maximum
+	const maxLevels = Math.min(tokens.length, 3)
+
+	for (let i = 1; i < maxLevels; i++) {
+		const arg = tokens[i]
+
+		if (typeof arg !== "string" || breakingExps.some((re) => re.test(arg))) break
+
+		const pattern = tokens.slice(0, i + 1).join(" ")
+		patterns.add(pattern.trim())
+	}
+}
+
+===== command-validation-quote-protection.ts =====
+// kilocode_change new file
+
+/**
+ * Placeholders used to protect newlines within quoted strings during command parsing.
+ * These constants are used by the protectNewlinesInQuotes function to temporarily replace
+ * newlines that appear inside quotes, preventing them from being treated as command separators.
+ * We use separate placeholders for \n and \r to preserve the original line ending type.
+ */
+export const NEWLINE_PLACEHOLDER = "___NEWLINE___"
+export const CARRIAGE_RETURN_PLACEHOLDER = "___CARRIAGE_RETURN___"
+
+/**
+ * Protect newlines inside quoted strings by replacing them with placeholders.
+ * This handles proper shell quoting rules where quotes can be concatenated.
+ * Uses separate placeholders for \n and \r to preserve the original line ending type.
+ *
+ * Examples:
+ * - "hello\nworld" -> newline is protected (inside double quotes)
+ * - 'hello\nworld' -> newline is protected (inside single quotes)
+ * - echo '"'A'"' -> A is NOT quoted (quote concatenation)
+ * - "hello"world -> world is NOT quoted
+ *
+ * @param command - The command string to process
+ * @param newlinePlaceholder - The placeholder string to use for \n characters
+ * @param carriageReturnPlaceholder - The placeholder string to use for \r characters
+ * @returns The command with newlines in quotes replaced by placeholders
+ */
+export function protectNewlinesInQuotes(
+	command: string,
+	newlinePlaceholder: string,
+	carriageReturnPlaceholder: string,
+): string {
+	let result = ""
+	let i = 0
+
+	while (i < command.length) {
+		const char = command[i]
+
+		if (char === '"') {
+			// Start of double-quoted string
+			result += char
+			i++
+
+			// Process until we find the closing unescaped quote
+			while (i < command.length) {
+				const quoteChar = command[i]
+				const prevChar = i > 0 ? command[i - 1] : ""
+
+				if (quoteChar === '"' && prevChar !== "\\") {
+					// Found closing quote
+					result += quoteChar
+					i++
+					break
+				} else if (quoteChar === "\n") {
+					// Replace \n inside double quotes
+					result += newlinePlaceholder
+					i++
+				} else if (quoteChar === "\r") {
+					// Replace \r inside double quotes
+					result += carriageReturnPlaceholder
+					i++
+				} else {
+					result += quoteChar
+					i++
+				}
+			}
+		} else if (char === "'") {
+			// Start of single-quoted string
+			result += char
+			i++
+
+			// Process until we find the closing quote
+			// Note: In single quotes, backslash does NOT escape (except for \' in some shells)
+			while (i < command.length) {
+				const quoteChar = command[i]
+
+				if (quoteChar === "'") {
+					// Found closing quote
+					result += quoteChar
+					i++
+					break
+				} else if (quoteChar === "\n") {
+					// Replace \n inside single quotes
+					result += newlinePlaceholder
+					i++
+				} else if (quoteChar === "\r") {
+					// Replace \r inside single quotes
+					result += carriageReturnPlaceholder
+					i++
+				} else {
+					result += quoteChar
+					i++
+				}
+			}
+		} else {
+			// Not in quotes, keep character as-is
+			result += char
+			i++
+		}
+	}
+
+	return result
+}
+
+===== command-validation.ts =====
+import { parse } from "shell-quote"
+// kilocode_change start
+import {
+	protectNewlinesInQuotes,
+	NEWLINE_PLACEHOLDER,
+	CARRIAGE_RETURN_PLACEHOLDER,
+} from "./command-validation-quote-protection"
+// kilocode_change end
+
+type ShellToken = string | { op: string } | { command: string }
+
+/**
+ * # Command Denylist Feature - Longest Prefix Match Strategy
+ *
+ * This module implements a sophisticated command validation system that uses the
+ * "longest prefix match" strategy to resolve conflicts between allowlist and denylist patterns.
+ *
+ * ## Core Concept: Longest Prefix Match
+ *
+ * When a command matches patterns in both the allowlist and denylist, the system uses
+ * the longest (most specific) match to determine the final decision. This approach
+ * provides fine-grained control over command execution permissions.
+ *
+ * ### Examples:
+ *
+ * **Example 1: Specific denial overrides general allowance**
+ * - Allowlist: ["git"]
+ * - Denylist: ["git push"]
+ * - Command: "git push origin main"
+ * - Result: DENIED (denylist match "git push" is longer than allowlist match "git")
+ *
+ * **Example 2: Specific allowance overrides general denial**
+ * - Allowlist: ["git push --dry-run"]
+ * - Denylist: ["git push"]
+ * - Command: "git push --dry-run origin main"
+ * - Result: APPROVED (allowlist match is longer and more specific)
+ *
+ * **Example 3: Wildcard handling**
+ * - Allowlist: ["*"]
+ * - Denylist: ["rm", "sudo"]
+ * - Command: "rm -rf /"
+ * - Result: DENIED (specific denylist match overrides wildcard allowlist)
+ *
+ * ## Command Processing Pipeline:
+ *
+ * 1. **Dangerous Substitution Detection**: Commands containing dangerous patterns like ${var@P} are never auto-approved
+ * 2. **Command Parsing**: Split chained commands (&&, ||, ;, |, &) into individual commands for separate validation
+ * 3. **Pattern Matching**: For each individual command, find the longest matching prefix in both allowlist and denylist
+ * 4. **Decision Logic**: Apply longest prefix match rule - more specific (longer) matches take precedence
+ * 5. **Aggregation**: Combine individual decisions - if any command is denied, the entire chain is denied
+ *
+ * ## Security Considerations:
+ *
+ * - **Dangerous Substitution Protection**: Detects dangerous parameter expansions and escape sequences that could execute commands
+ * - **Chain Analysis**: Each command in a chain (cmd1 && cmd2) is validated separately to prevent bypassing via chaining
+ * - **Case Insensitive**: All pattern matching is case-insensitive for consistent behavior across different input styles
+ * - **Whitespace Handling**: Commands are trimmed and normalized before matching to prevent whitespace-based bypasses
+ *
+ * ## Configuration Merging:
+ *
+ * The system merges command lists from two sources with global state taking precedence:
+ * 1. Global state (user preferences)
+ * 2. Workspace configuration (project-specific settings)
+ *
+ * This allows users to have personal defaults while projects can define specific restrictions.
+ */
+
+/**
+ * Detect dangerous parameter substitutions that could lead to command execution.
+ * These patterns are never auto-approved and always require explicit user approval.
+ *
+ * Detected patterns:
+ * - ${var@P} - Prompt string expansion (interprets escape sequences and executes embedded commands)
+ * - ${var@Q} - Quote removal
+ * - ${var@E} - Escape sequence expansion
+ * - ${var@A} - Assignment statement
+ * - ${var@a} - Attribute flags
+ * - ${var=value} with escape sequences - Can embed commands via \140 (backtick), \x60, or \u0060
+ * - ${!var} - Indirect variable references
+ * - <<<$(...) or <<<`...` - Here-strings with command substitution
+ * - =(...) - Zsh process substitution that executes commands
+ * - *(e:...:) or similar - Zsh glob qualifiers with code execution
+ *
+ * @param source - The command string to analyze
+ * @returns true if dangerous substitution patterns are detected, false otherwise
+ */
+export function containsDangerousSubstitution(source: string): boolean {
+	// Check for dangerous 
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== context-mentions.ts =====
+import { Fzf } from "fzf"
+
+import type { ModeConfig } from "@roo-code/types"
+import type { Command } from "@roo/ExtensionMessage"
+
+import { mentionRegex } from "@roo/context-mentions"
+
+import { escapeSpaces } from "./path-mentions"
+
+/**
+ * Gets the description for a mode, prioritizing description > whenToUse > roleDefinition
+ * and taking only the first line
+ */
+function getModeDescription(mode: ModeConfig): string {
+	return (mode.description || mode.whenToUse || mode.roleDefinition).split("\n")[0]
+}
+
+export interface SearchResult {
+	path: string
+	type: "file" | "folder"
+	label?: string
+}
+
+function getBasename(filepath: string): string {
+	return filepath.split("/").pop() || filepath
+}
+
+export function insertMention(
+	text: string,
+	position: number,
+	value: string,
+	isSlashCommand: boolean = false,
+): { newValue: string; mentionIndex: number } {
+	// Handle slash command selection (only when explicitly selecting a slash command)
+	if (isSlashCommand) {
+		return {
+			newValue: value,
+			mentionIndex: 0,
+		}
+	}
+
+	const beforeCursor = text.slice(0, position)
+	const afterCursor = text.slice(position)
+
+	// Find the position of the last '@' symbol before the cursor
+	const lastAtIndex = beforeCursor.lastIndexOf("@")
+
+	// Process the value - escape spaces if it's a file path
+	let processedValue = value
+	if (value && value.startsWith("/")) {
+		// Only escape if the path contains spaces that aren't already escaped
+		if (value.includes(" ") && !value.includes("\\ ")) {
+			processedValue = escapeSpaces(value)
+		}
+	}
+
+	let newValue: string
+	let mentionIndex: number
+
+	if (lastAtIndex !== -1) {
+		// If there's an '@' symbol, replace everything after it with the new mention
+		const beforeMention = text.slice(0, lastAtIndex)
+		// Only replace if afterCursor is all alphanumerical
+		// This is required to handle languages that don't use space as a word separator (chinese, japanese, korean, etc)
+		const afterCursorContent = /^[a-zA-Z0-9\s]*$/.test(afterCursor)
+			? afterCursor.replace(/^[^\s]*/, "")
+			: afterCursor
+		newValue = beforeMention + "@" + processedValue + " " + afterCursorContent
+		mentionIndex = lastAtIndex
+	} else {
+		// If there's no '@' symbol, insert the mention at the cursor position
+		newValue = beforeCursor + "@" + processedValue + " " + afterCursor
+		mentionIndex = position
+	}
+
+	return { newValue, mentionIndex }
+}
+
+export function removeMention(text: string, position: number): { newText: string; newPosition: number } {
+	const beforeCursor = text.slice(0, position)
+	const afterCursor = text.slice(position)
+
+	// Check if we're at the end of a mention
+	const matchEnd = beforeCursor.match(new RegExp(mentionRegex.source + "$"))
+
+	if (matchEnd) {
+		// If we're at the end of a mention, remove it
+		// Remove the mention and the first space that follows it
+		const mentionLength = matchEnd[0].length
+		// Remove the mention and one space after it if it exists
+		const newText = text.slice(0, position - mentionLength) + afterCursor.replace(/^\s/, "")
+		const newPosition = position - mentionLength
+		return { newText, newPosition }
+	}
+
+	// If we're not at the end of a mention, just return the original text and position
+	return { newText: text, newPosition: position }
+}
+
+export enum ContextMenuOptionType {
+	OpenedFile = "openedFile",
+	File = "file",
+	Folder = "folder",
+	Problems = "problems",
+	Terminal = "terminal",
+	URL = "url",
+	Git = "git",
+	NoResults = "noResults",
+	Mode = "mode", // Add mode type
+	Image = "image", // kilocode_change
+	Command = "command", // Add command type
+	SectionHeader = "sectionHeader", // Add section header type
+}
+
+export interface ContextMenuQueryItem {
+	type: ContextMenuOptionType
+	value?: string
+	label?: string
+	description?: string
+	icon?: string
+	slashCommand?: string
+	secondaryText?: string
+	argumentHint?: string
+}
+
+export function getContextMenuOptions(
+	query: string,
+	selectedType: ContextMenuOptionType | null = null,
+	queryItems: ContextMenuQueryItem[],
+	dynamicSearchResults: SearchResult[] = [],
+	modes?: 
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== delayUtils.ts =====
+export const DELAY_VALUES = [
+	50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1500, 2000, 2500, 3000, 3500, 4000, 4500, 5000,
+]
+
+export function normalizeAutoTriggerDelay(value: number | undefined): number {
+	if (value === undefined) return 3000
+	if (value < 50) {
+		return Math.min(value, 5) * 1000
+	}
+	return value
+}
+
+export function formatDelay(ms: number): string {
+	if (ms < 1000) {
+		return `${ms}ms`
+	}
+	return `${ms / 1000}s`
+}
+
+===== docLinks.ts =====
+/**
+ * Utility for building Roo Code documentation links with UTM telemetry.
+ *
+ * @param path - The path after the docs root (no leading slash)
+ * @param campaign - The UTM campaign context (e.g. "welcome", "provider_docs", "tips", "error_tooltip")
+ * @returns The full docs URL with UTM parameters
+ */
+// kilocode_change: unused campaign param
+export function buildDocLink(path: string, _campaign: string): string {
+	// Remove any leading slash from path
+	const cleanPath = path
+		.replace(/^\//, "")
+		.replace("troubleshooting/shell-integration/", "features/shell-integration") // kilocode_change
+	const [basePath, hash] = cleanPath.split("#")
+	const baseUrl = `https://kilocode.ai/docs/${basePath}`
+	return hash ? `${baseUrl}#${hash}` : baseUrl
+}
+
+===== fixPointerEvents.ts =====
+/**
+ * Utility to fix the Radix UI DismissableLayer issue where body.style.pointerEvents = 'none'
+ * is not properly restored when dialogs are closed, particularly when switching to the MCP tab.
+ *
+ * The root cause is a race condition in the Radix UI DismissableLayer component:
+ * When multiple layers are closing at the same time, they might both check
+ * context.layersWithOutsidePointerEventsDisabled.size > 1 before either has been removed,
+ * causing both to skip restoring the pointer events.
+ *
+ * More info (not confirmed which is the root cause):
+ * https://github.com/radix-ui/primitives/issues?q=pointer%20Events%20
+ */
+
+/**
+ * Ensures that the body's pointer-events style is restored to its default value.
+ * This should be called after dialog interactions, especially when switching tabs.
+ */
+export function ensureBodyPointerEventsRestored(): void {
+	if (document.body.style.pointerEvents === "none") {
+		document.body.style.pointerEvents = ""
+	}
+}
+
+===== format.ts =====
+import i18next from "i18next"
+
+export function formatLargeNumber(num: number): string {
+	if (num >= 1e9) {
+		return (num / 1e9).toFixed(1) + i18next.t("common:number_format.billion_suffix")
+	}
+	if (num >= 1e6) {
+		return (num / 1e6).toFixed(1) + i18next.t("common:number_format.million_suffix")
+	}
+	if (num >= 1e3) {
+		return (num / 1e3).toFixed(1) + i18next.t("common:number_format.thousand_suffix")
+	}
+	return num.toString()
+}
+
+export const formatDate = (timestamp: number) => {
+	const date = new Date(timestamp)
+	const locale = i18next.language || "en"
+
+	return date.toLocaleString(locale, {
+		month: "long",
+		day: "numeric",
+		hour: "numeric",
+		minute: "2-digit",
+		hour12: true,
+	})
+}
+
+export const formatTimeAgo = (timestamp: number) => {
+	const now = Date.now()
+	const diff = now - timestamp
+	const seconds = Math.floor(diff / 1000)
+	const minutes = Math.floor(seconds / 60)
+	const hours = Math.floor(minutes / 60)
+	const days = Math.floor(hours / 24)
+	const weeks = Math.floor(days / 7)
+	const months = Math.floor(days / 30)
+	const years = Math.floor(days / 365)
+
+	if (years > 0) {
+		return years === 1
+			? i18next.t("common:time_ago.year_ago")
+			: i18next.t("common:time_ago.years_ago", { count: years })
+	}
+	if (months > 0) {
+		return months === 1
+			? i18next.t("common:time_ago.month_ago")
+			: i18next.t("common:time_ago.months_ago", { count: months })
+	}
+	if (weeks > 0) {
+		return weeks === 1
+			? i18next.t("common:time_ago.week_ago")
+			: i18next.t("common:time_ago.weeks_ago", { count: weeks })
+	}
+	if (days > 0) {
+		return days === 1
+			? i18next.t("common:time_ago.day_ago")
+			: i18next.t("common:time_ago.days_ago", { count: days })
+	}
+	if (hours > 0) {
+		return hours === 1
+			? i18next.t("common:time_ago.hour_ago")
+			: i18next.t("common:time_ago.hours_ago", { count: hours })
+	}
+	if (minutes > 0) {
+		return minutes === 1
+			? i18next.t("common:time_ago.minute_ago")
+			: i18next.t("common:time_ago.minutes_ago", { count: minutes })
+	}
+	if (seconds > 30) {
+		return i18next.t("common:time_ago.seconds_ago", { count: seconds })
+	}
+
+	return i18next.t("common:time_ago.just_now")
+}
+
+===== formatPrice.ts =====
+export const formatPrice = (price: number) => {
+	return new Intl.NumberFormat("en-US", {
+		style: "currency",
+		currency: "USD",
+		minimumFractionDigits: 2,
+		maximumFractionDigits: 2,
+	}).format(price)
+}
+
+===== getLanguageFromPath.ts =====
+const extensionToLanguage: { [key: string]: string } = {
+	// Web technologies
+	html: "html",
+	htm: "html",
+	css: "css",
+	js: "javascript",
+	jsx: "jsx",
+	ts: "typescript",
+	tsx: "tsx",
+
+	// Backend languages
+	py: "python",
+	rb: "ruby",
+	php: "php",
+	java: "java",
+	cs: "csharp",
+	go: "go",
+	rs: "rust",
+	scala: "scala",
+	kt: "kotlin",
+	swift: "swift",
+
+	// Markup and data
+	json: "json",
+	xml: "xml",
+	yaml: "yaml",
+	yml: "yaml",
+	md: "markdown",
+	csv: "csv",
+
+	// Shell and scripting
+	sh: "bash",
+	bash: "bash",
+	zsh: "bash",
+	ps1: "powershell",
+
+	// Configuration
+	toml: "toml",
+	ini: "ini",
+	cfg: "ini",
+	conf: "ini",
+
+	// Other
+	sql: "sql",
+	graphql: "graphql",
+	gql: "graphql",
+	tex: "latex",
+	svg: "svg",
+	txt: "text",
+
+	// C-family languages
+	c: "c",
+	cpp: "cpp",
+	h: "c",
+	hpp: "cpp",
+
+	// Functional languages
+	hs: "haskell",
+	lhs: "haskell",
+	elm: "elm",
+	clj: "clojure",
+	cljs: "clojure",
+	erl: "erlang",
+	ex: "elixir",
+	exs: "elixir",
+
+	// Mobile development
+	dart: "dart",
+	m: "objectivec",
+	mm: "objectivec",
+
+	// Game development
+	lua: "lua",
+	gd: "gdscript", // Godot
+	unity: "csharp", // Unity (using C#)
+
+	// Data science and ML
+	r: "r",
+	jl: "julia",
+	ipynb: "jupyter", // Jupyter notebooks
+}
+
+// Example usage:
+// console.log(getLanguageFromPath('/path/to/file.js')); // Output: javascript
+
+export function getLanguageFromPath(path: string): string | undefined {
+	const extension = path.split(".").pop()?.toLowerCase() || ""
+	return extensionToLanguage[extension]
+}
+
+===== globalStateHelpers.ts =====
+import { vscode } from "@src/utils/vscode"
+import type { GlobalState } from "@roo-code/types"
+import { GlobalStateValue } from "@roo/WebviewMessage"
+
+/**
+ * Type-safe helper for sending global state updates from the WebView
+ */
+export function updateHostGlobalState<K extends keyof GlobalState>(stateKey: K, stateValue: GlobalStateValue<K>): void {
+	vscode.postMessage({ type: "updateGlobalState", stateKey, stateValue })
+}
+
+===== highlight.ts =====
+import { LRUCache } from "lru-cache"
+
+// LRU cache for escapeHtml with reasonable size limit
+const escapeHtmlCache = new LRUCache<string, string>({ max: 500 })
+
+function escapeHtml(text: string): string {
+	// Check cache first
+	const cached = escapeHtmlCache.get(text)
+	if (cached !== undefined) {
+		return cached
+	}
+
+	// Compute escaped text
+	const escaped = text
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;")
+		.replace(/"/g, "&quot;")
+		.replace(/'/g, "&#39;")
+
+	// Cache the result
+	escapeHtmlCache.set(text, escaped)
+
+	return escaped
+}
+
+export function highlightFzfMatch(
+	text: string,
+	positions: number[],
+	highlightClassName: string = "history-item-highlight",
+) {
+	if (!positions.length) return text
+
+	const parts: { text: string; highlight: boolean }[] = []
+	let lastIndex = 0
+
+	// Sort positions to ensure we process them in order
+	positions.sort((a, b) => a - b)
+
+	positions.forEach((pos) => {
+		// Add non-highlighted text before this position
+		if (pos > lastIndex) {
+			parts.push({
+				text: text.substring(lastIndex, pos),
+				highlight: false,
+			})
+		}
+
+		// Add highlighted character
+		parts.push({
+			text: text[pos],
+			highlight: true,
+		})
+
+		lastIndex = pos + 1
+	})
+
+	// Add any remaining text
+	if (lastIndex < text.length) {
+		parts.push({
+			text: text.substring(lastIndex),
+			highlight: false,
+		})
+	}
+
+	// Build final string
+	return parts
+		.map((part) => {
+			const escapedText = escapeHtml(part.text)
+			return part.highlight ? `<span class="${highlightClassName}">${escapedText}</span>` : escapedText
+		})
+		.join("")
+}
+
+===== highlighter.ts =====
+import {
+	createHighlighter,
+	type Highlighter,
+	type BundledTheme,
+	type BundledLanguage,
+	bundledLanguages,
+	bundledThemes,
+} from "shiki"
+
+// Extend BundledLanguage to include 'txt' because Shiki supports this but it is
+// not listed in the bundled languages
+export type ExtendedLanguage = BundledLanguage | "txt"
+
+// Map common language aliases to their Shiki BundledLanguage equivalent
+const languageAliases: Record<string, ExtendedLanguage> = {
+	// Plain text variants
+	text: "txt",
+	plaintext: "txt",
+	plain: "txt",
+
+	// Shell/Bash variants
+	sh: "shell",
+	bash: "shell",
+	zsh: "shell",
+	shellscript: "shell",
+	"shell-script": "shell",
+	console: "shell",
+	terminal: "shell",
+
+	// JavaScript variants
+	js: "javascript",
+	node: "javascript",
+	nodejs: "javascript",
+
+	// TypeScript variants
+	ts: "typescript",
+
+	// Python variants
+	py: "python",
+	python3: "python",
+	py3: "python",
+
+	// Ruby variants
+	rb: "ruby",
+
+	// Markdown variants
+	md: "markdown",
+
+	// C++ variants
+	cpp: "c++",
+	cc: "c++",
+
+	// C# variants
+	cs: "c#",
+	csharp: "c#",
+
+	// HTML variants
+	htm: "html",
+
+	// YAML variants
+	yml: "yaml",
+
+	// Docker variants
+	dockerfile: "docker",
+
+	// CSS variants
+	styles: "css",
+	style: "css",
+
+	// JSON variants
+	jsonc: "json",
+	json5: "json",
+
+	// XML variants
+	xaml: "xml",
+	xhtml: "xml",
+	svg: "xml",
+
+	// SQL variants
+	mysql: "sql",
+	postgresql: "sql",
+	postgres: "sql",
+	pgsql: "sql",
+	plsql: "sql",
+	oracle: "sql",
+}
+
+// Track which languages we've warned about to avoid duplicate warnings
+const warnedLanguages = new Set<string>()
+
+// Normalize language to a valid Shiki language
+export function normalizeLanguage(language: string | undefined): ExtendedLanguage {
+	if (language === undefined) {
+		return "txt"
+	}
+
+	// Convert to lowercase for consistent matching
+	const normalizedInput = language.toLowerCase()
+
+	// If it's already a valid bundled language, return it
+	if (normalizedInput in bundledLanguages) {
+		return normalizedInput as BundledLanguage
+	}
+
+	// Check if it's an alias
+	if (normalizedInput in languageAliases) {
+		return languageAliases[normalizedInput]
+	}
+
+	// Warn about unrecognized language and default to txt (only once per language)
+	if (language !== "txt" && !warnedLanguages.has(language)) {
+		console.warn(`[Shiki] Unrecognized language '${language}', defaulting to txt.`)
+		warnedLanguages.add(language)
+	}
+
+	return "txt"
+}
+
+// Export function to check if a language is loaded
+export const isLanguageLoaded = (language: string): boolean => {
+	return state.loadedLanguages.has(normalizeLanguage(language))
+}
+
+// Artificial delay for testing language loading (ms) - for testing
+const LANGUAGE_LOAD_DELAY = 0
+
+// Common languages for first-stage initialization
+const initialLanguages: BundledLanguage[] = ["shell", "log"]
+
+// Singleton state
+const state: {
+	instance: Highlighter | null
+	instanceInitPromise: Promise<Highlighter> | null
+	loadedLanguages: Set<ExtendedLanguage>
+	pendingLanguageLoads: Map<ExtendedLanguage, Promise<void>>
+} = {
+	instance: null,
+	instanceInitPromise: null,
+	loadedLanguages: new Set<ExtendedLanguage>(["txt"]),
+	pendingLanguageLoads: new Map(),
+}
+
+export const getHighlighter = async (language?: string): Promise<Highlighter> => {
+	try {
+		const shikilang = normalizeLanguage(language)
+
+		// Initialize highlighter if needed
+		if (!state.instanceInitPromise) {
+			state.instanceInitPromise = (async () => {
+				// const startTime = performance.now()
+				// console.debug("[Shiki] Initialization started...")
+
+				const instance = await createHighlighter({
+					themes: Object.keys(bundledThemes) as BundledTheme[],
+					langs: initialLanguages,
+				})
+
+				// const elapsed = Math.round(performance.now() - startTime)
+				// console.debug(`[Shiki] Initialization complete (${elapsed}ms)`)
+
+				state.instance = instance
+
+				// Track initially loaded languages
+				initialLanguages.forEach((lang) => state.loadedLanguages.add(lang))
+
+				return instance
+			})()
+		}
+
+		// Wait for initialization to complete
+		const instance = 
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== imageUtils.ts =====
+/**
+ * Utility function to append new images to existing images array
+ * while respecting the maximum image limit
+ *
+ * @param currentImages - The current array of images
+ * @param newImages - The new images to append
+ * @param maxImages - The maximum number of images allowed
+ * @returns The updated images array
+ */
+export function appendImages(currentImages: string[], newImages: string[] | undefined, maxImages: number): string[] {
+	const imagesToAdd = newImages ?? []
+	if (imagesToAdd.length === 0) {
+		return currentImages
+	}
+
+	return [...currentImages, ...imagesToAdd].slice(0, maxImages)
+}
+
+===== mcp.ts =====
+import { McpResource, McpResourceTemplate } from "@roo/mcp"
+
+/**
+ * Matches a URI against an array of URI templates and returns the matching template
+ * @param uri The URI to match
+ * @param templates Array of URI templates to match against
+ * @returns The matching template or undefined if no match is found
+ */
+export function findMatchingTemplate(
+	uri: string,
+	templates: McpResourceTemplate[] = [],
+): McpResourceTemplate | undefined {
+	return templates.find((template) => {
+		// Convert template to regex pattern
+		const pattern = String(template.uriTemplate)
+			// First escape special regex characters
+			.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+			// Then replace {param} with ([^/]+) to match any non-slash characters
+			// We need to use \{ and \} because we just escaped them
+			.replace(/\\\{([^}]+)\\\}/g, "([^/]+)")
+
+		const regex = new RegExp(`^${pattern}$`)
+		return regex.test(uri)
+	})
+}
+
+/**
+ * Finds either an exact resource match or a matching template for a given URI
+ * @param uri The URI to find a match for
+ * @param resources Array of concrete resources
+ * @param templates Array of resource templates
+ * @returns The matching resource, template, or undefined
+ */
+export function findMatchingResourceOrTemplate(
+	uri: string,
+	resources: McpResource[] = [],
+	templates: McpResourceTemplate[] = [],
+): McpResource | McpResourceTemplate | undefined {
+	// First try to find an exact resource match
+	const exactMatch = resources.find((resource) => resource.uri === uri)
+	if (exactMatch) return exactMatch
+
+	// If no exact match, try to find a matching template
+	return findMatchingTemplate(uri, templates)
+}
+
+===== messageColors.ts =====
+import type { ClineMessage } from "@roo-code/types"
+
+export interface TaskTimelineMessageTypeConfig {
+	color: string
+	translationKey: string
+}
+
+export const taskTimelineColorPalette = {
+	USER_INTERACTION:
+		"bg-[color-mix(in_srgb,var(--vscode-editor-findMatchBackground)_50%,var(--vscode-errorForeground))]", // Tan/orange-ish
+	SYSTEM_READ: "bg-[var(--vscode-textLink-foreground)]", // Light blue for file reads
+	SYSTEM_WRITE: "bg-[var(--vscode-focusBorder)]", // Dark blue for file writes
+	SYSTEM_GENERAL_TOOL: "bg-[var(--vscode-activityBarBadge-background)]", // Blue for browser/server tools
+	SUCCESS: "bg-[var(--vscode-editorGutter-addedBackground)]", // Green for success
+	ERROR: "bg-[var(--vscode-errorForeground)]", // Red for errors
+	ASSISTANT_MUTTERING: "bg-[var(--vscode-descriptionForeground)]", // Gray for reasoning/text
+	ASSISTANT_QUESTION: "bg-[color-mix(in_srgb,var(--vscode-editor-findMatchBackground)_60%,var(--vscode-foreground))]", // Yellowish/tan
+	GROUPED: "bg-[var(--vscode-textLink-activeForeground)]", // Cyan for grouped messages
+	DEFAULT: "bg-[var(--vscode-badge-background)]", // Fallback gray
+}
+
+/**
+ * Registry of message types that should be shown in the task timeline.
+ * If a message type is not in this registry, it will be filtered out.
+ * This serves as the single source of truth for task timeline message configuration.
+ */
+export const TASK_TIMELINE_MESSAGE_TYPES: Record<string, TaskTimelineMessageTypeConfig> = {
+	// Ask types that should be shown (everything except the filtered ones)
+	"ask:tool": {
+		color: taskTimelineColorPalette.SYSTEM_GENERAL_TOOL,
+		translationKey: "kilocode:taskTimeline.tooltip.messageTypes.tool",
+	},
+	"ask:completion_result": {
+		color: taskTimelineColorPalette.SUCCESS,
+		translationKey: "kilocode:taskTimeline.tooltip.messageTypes.completion_result",
+	},
+	"ask:browser_action_launch": {
+		color: taskTimelineColorPalette.SYSTEM_GENERAL_TOOL,
+		translationKey: "kilocode:taskTimeline.tooltip.messageTypes.browser_action_launch",
+	},
+	"ask:use_mcp_server": {
+		color: taskTimelineColorPalette.SYSTEM_GENERAL_TOOL,
+		translationKey: "kilocode:taskTimeline.tooltip.messageTypes.use_mcp_server",
+	},
+	"ask:command": {
+		color: taskTimelineColorPalette.SYSTEM_GENERAL_TOOL,
+		translationKey: "kilocode:taskTimeline.tooltip.messageTypes.command",
+	},
+	"ask:followup": {
+		color: taskTimelineColorPalette.ASSISTANT_QUESTION,
+		translationKey: "kilocode:taskTimeline.tooltip.messageTypes.followup",
+	},
+
+	// Say types that should be shown (everything except the filtered ones)
+	"say:text": {
+		color: taskTimelineColorPalette.ASSISTANT_MUTTERING,
+		translationKey: "kilocode:taskTimeline.tooltip.messageTypes.text",
+	},
+	"say:reasoning": {
+		color: taskTimelineColorPalette.ASSISTANT_MUTTERING,
+		translationKey: "kilocode:taskTimeline.tooltip.messageTypes.reasoning",
+	},
+	"say:mcp_server_response": {
+		color: taskTimelineColorPalette.SYSTEM_GENERAL_TOOL,
+		translationKey: "kilocode:taskTimeline.tooltip.messageTypes.mcp_server_response",
+	},
+	"say:command_output": {
+		color: taskTimelineColorPalette.SYSTEM_GENERAL_TOOL,
+		translationKey: "kilocode:taskTimeline.tooltip.messageTypes.command_output",
+	},
+	"say:browser_action": {
+		color: taskTimelineColorPalette.SYSTEM_GENERAL_TOOL,
+		translationKey: "kilocode:taskTimeline.tooltip.messageTypes.browser_action",
+	},
+	"say:browser_action_result": {
+		color: taskTimelineColorPalette.SYSTEM_GENERAL_TOOL,
+		translationKey: "kilocode:taskTimeline.tooltip.messageTypes.browser_action_result",
+	},
+	"say:completion_result": {
+		color: taskTimelineColorPalette.SUCCESS,
+		translationKey: "kilocode:taskTimeline.tooltip.messageTypes.completion_result",
+	},
+	"say:error": {
+		color: taskTimelineColorPalette.ERROR,
+		translationKey: "kilocode:taskTimeline.tooltip.messageTypes.error",
+	},
+	"say:checkpoint_saved": {
+		color: taskTimelineColorPalette.SUCCESS,
+		translationKey: "kilocode:taskTimeline.tooltip.messageTypes.checkpoint_saved",
+	},
+	"say:condense_context": {
+		color: taskTime
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== model-utils.ts =====
+import { ANTHROPIC_DEFAULT_MAX_TOKENS } from "@roo-code/types"
+
+/**
+ * Result of token distribution calculation
+ */
+export interface TokenDistributionResult {
+	/**
+	 * Percentage of context window used by current tokens (0-100)
+	 */
+	currentPercent: number
+
+	/**
+	 * Percentage of context window reserved for model output (0-100)
+	 */
+	reservedPercent: number
+
+	/**
+	 * Percentage of context window still available (0-100)
+	 */
+	availablePercent: number
+
+	/**
+	 * Number of tokens reserved for model output
+	 */
+	reservedForOutput: number
+
+	/**
+	 * Number of tokens still available in the context window
+	 */
+	availableSize: number
+}
+
+/**
+ * Calculates distribution of tokens within the context window
+ * This is used for visualizing the token distribution in the UI
+ *
+ * @param contextWindow The total size of the context window
+ * @param contextTokens The number of tokens currently used
+ * @param maxTokens Optional override for tokens reserved for model output (otherwise uses 8192)
+ * @returns Distribution of tokens with percentages and raw numbers
+ */
+export const calculateTokenDistribution = (
+	contextWindow: number,
+	contextTokens: number,
+	maxTokens?: number,
+): TokenDistributionResult => {
+	// Handle potential invalid inputs with positive fallbacks
+	const safeContextWindow = Math.max(0, contextWindow)
+	const safeContextTokens = Math.max(0, contextTokens)
+
+	// Get the actual max tokens value from the model
+	// If maxTokens is valid (positive and not equal to context window), use it, otherwise reserve 8192 tokens as a default
+	const reservedForOutput =
+		maxTokens && maxTokens > 0 && maxTokens !== safeContextWindow ? maxTokens : ANTHROPIC_DEFAULT_MAX_TOKENS
+
+	// Calculate sizes directly without buffer display
+	const availableSize = Math.max(0, safeContextWindow - safeContextTokens - reservedForOutput)
+
+	// Calculate percentages - ensure they sum to exactly 100%
+	// Use the ratio of each part to the total context window
+	const total = safeContextTokens + reservedForOutput + availableSize
+
+	// Safeguard against division by zero
+	if (total <= 0) {
+		return {
+			currentPercent: 0,
+			reservedPercent: 0,
+			availablePercent: 0,
+			reservedForOutput,
+			availableSize,
+		}
+	}
+
+	return {
+		currentPercent: (safeContextTokens / total) * 100,
+		reservedPercent: (reservedForOutput / total) * 100,
+		availablePercent: (availableSize / total) * 100,
+		reservedForOutput,
+		availableSize,
+	}
+}
+
+===== patchBridge.ts =====
+import { vscode } from "./vscode"
+
+/**
+ * Bridge for reporting patch operations and errors from the UI to the supervisor service
+ */
+
+/**
+ * Patch execution outcome
+ */
+export enum PatchOutcome {
+	/** Patch was successfully applied */
+	SUCCESS = "success",
+	/** Patch failed to apply */
+	FAILURE = "failure",
+	/** Patch was partially applied */
+	PARTIAL = "partial",
+	/** Patch was skipped */
+	SKIPPED = "skipped",
+}
+
+/**
+ * Patch classification for categorization
+ */
+export enum PatchClassification {
+	/** Bug fix */
+	BUGFIX = "bugfix",
+	/** New feature */
+	FEATURE = "feature",
+	/** Refactoring */
+	REFACTOR = "refactor",
+	/** Documentation */
+	DOCS = "docs",
+	/** Test */
+	TEST = "test",
+	/** Configuration */
+	CONFIG = "config",
+	/** Other */
+	OTHER = "other",
+}
+
+/**
+ * Result of executing a patch operation
+ */
+export interface PatchResult {
+	/** ID of the patch operation */
+	opId: string
+	/** Outcome of the patch operation */
+	outcome: PatchOutcome
+	/** Classification of the patch */
+	classification: PatchClassification
+	/** Hash of the original content */
+	originalHash?: string
+	/** Hash of the patched content */
+	patchedHash?: string
+	/** Optional error message if the patch failed */
+	error?: string
+	/** Optional warnings */
+	warnings?: string[]
+	/** Line numbers that were modified */
+	modifiedLines?: number[]
+	/** Execution time in milliseconds */
+	executionTimeMs?: number
+}
+
+/**
+ * Reports an edit error from the UI to the supervisor service.
+ *
+ * This function sends an error message to the supervisor service using the
+ * vscode postMessage infrastructure. The message is sent with type "supervisor:error"
+ * and includes the provided payload.
+ *
+ * @param payload - The error payload to report. Should contain error details
+ *                 in a format expected by the supervisor service
+ * @throws Error if posting the message fails
+ *
+ * @example
+ * ```typescript
+ * try {
+ *   // Some operation that might fail
+ *   await applyPatch(patchData);
+ * } catch (error) {
+ *   const errorPayload = createErrorPayload(error, { operation: 'applyPatch' });
+ *   reportEditError(errorPayload);
+ * }
+ * ```
+ */
+export function reportEditError(payload: any): void {
+	try {
+		// Type assertion to bypass TypeScript checking for new message types
+		;(vscode.postMessage as any)({
+			type: "supervisor:error",
+			payload,
+		})
+	} catch (error) {
+		console.error("Failed to report edit error:", error)
+		throw new Error(`Failed to report edit error: ${error instanceof Error ? error.message : String(error)}`)
+	}
+}
+
+/**
+ * Reports a patch result from the UI to the supervisor service.
+ *
+ * This function sends a patch result message to the supervisor service using the
+ * vscode postMessage infrastructure. The message is sent with type "supervisor:result"
+ * and includes the provided patch result data.
+ *
+ * @param result - The patch result to report. Should contain operation outcome,
+ *                 classification, and other relevant metadata
+ * @throws Error if posting the message fails
+ *
+ * @example
+ * ```typescript
+ * const result: PatchResult = {
+ *   opId: 'patch-123',
+ *   outcome: PatchOutcome.SUCCESS,
+ *   classification: PatchClassification.BUGFIX,
+ *   executionTimeMs: 150
+ * };
+ *
+ * reportPatchResult(result);
+ * ```
+ */
+export function reportPatchResult(result: PatchResult): void {
+	try {
+		// Type assertion to bypass TypeScript checking for new message types
+		;(vscode.postMessage as any)({
+			type: "supervisor:result",
+			payload: result,
+		})
+	} catch (error) {
+		console.error("Failed to report patch result:", error)
+		throw new Error(`Failed to report patch result: ${error instanceof Error ? error.message : String(error)}`)
+	}
+}
+
+/**
+ * Creates a standardized error payload for the supervisor service.
+ *
+ * This helper function formats an error object into a standardized payload
+ * that can be sent to the supervisor service. It includes the error message,
+ * stack trace, optional context, and a timestamp.
+ *
+ * @param error - The error o
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== path-mentions.ts =====
+/**
+ * Utilities for handling path-related operations in mentions
+ */
+
+/**
+ * Escapes spaces in a path with backslashes
+ *
+ * @param path The path to escape
+ * @returns A path with spaces escaped
+ */
+export function escapeSpaces(path: string): string {
+	return path.replace(/ /g, "\\ ")
+}
+
+/**
+ * Converts an absolute path to a mention-friendly path
+ * If the provided path starts with the current working directory,
+ * it's converted to a relative path prefixed with @
+ * Spaces in the path are escaped with backslashes
+ *
+ * @param path The path to convert
+ * @param cwd The current working directory
+ * @returns A mention-friendly path
+ */
+export function convertToMentionPath(path: string, cwd?: string): string {
+	// Strip file:// or vscode-remote:// protocol if present
+	let pathWithoutProtocol = path
+
+	if (path.startsWith("file://")) {
+		pathWithoutProtocol = path.substring(7)
+	} else if (path.startsWith("vscode-remote://")) {
+		const protocolStripped = path.substring("vscode-remote://".length)
+		const firstSlashIndex = protocolStripped.indexOf("/")
+		if (firstSlashIndex !== -1) {
+			pathWithoutProtocol = protocolStripped.substring(firstSlashIndex + 1)
+		} else {
+			pathWithoutProtocol = ""
+		}
+	}
+
+	try {
+		pathWithoutProtocol = decodeURIComponent(pathWithoutProtocol)
+		// Fix: Remove leading slash for Windows paths like /d:/...
+		if (pathWithoutProtocol.startsWith("/") && pathWithoutProtocol[2] === ":") {
+			pathWithoutProtocol = pathWithoutProtocol.substring(1)
+		}
+	} catch (e) {
+		// Log error if decoding fails, but continue with the potentially problematic path
+		console.error("Error decoding URI component in convertToMentionPath:", e, pathWithoutProtocol)
+	}
+
+	const normalizedPath = pathWithoutProtocol.replace(/\\/g, "/")
+	let normalizedCwd = cwd ? cwd.replace(/\\/g, "/") : ""
+
+	if (!normalizedCwd) {
+		return pathWithoutProtocol
+	}
+
+	// Remove trailing slash from cwd if it exists
+	if (normalizedCwd.endsWith("/")) {
+		normalizedCwd = normalizedCwd.slice(0, -1)
+	}
+
+	// Always use case-insensitive comparison for path matching
+	const lowerPath = normalizedPath.toLowerCase()
+	const lowerCwd = normalizedCwd.toLowerCase()
+
+	if (lowerPath.startsWith(lowerCwd)) {
+		let relativePath = normalizedPath.substring(normalizedCwd.length)
+		// Ensure there's a slash after the @ symbol when we create the mention path
+		relativePath = relativePath.startsWith("/") ? relativePath : "/" + relativePath
+
+		// Escape any spaces in the path with backslashes
+		const escapedRelativePath = escapeSpaces(relativePath)
+
+		return "@" + escapedRelativePath
+	}
+
+	return pathWithoutProtocol
+}
+
+===== prettyModelName.ts =====
+export const prettyModelName = (modelId: string): string => {
+	if (!modelId) {
+		return ""
+	}
+	const [mainId, tag] = modelId.split(":")
+
+	const projectName = mainId.includes("/") ? mainId.split("/")[0] : ""
+	const modelName = mainId.includes("/") ? mainId.split("/")[1] : mainId
+
+	// Capitalize each word and join with spaces
+	const formattedProject = projectName ? projectName.charAt(0).toUpperCase() + projectName.slice(1) : ""
+
+	const formattedName = modelName
+		.split("-")
+		.filter(Boolean)
+		.map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+		.join(" ")
+
+	const formattedTag = tag ? `(${tag.charAt(0).toUpperCase() + tag.slice(1)})` : ""
+
+	return [[formattedProject, formattedName].filter(Boolean).join(" / "), formattedTag].join(" ")
+}
+
+===== removeLeadingNonAlphanumeric.ts =====
+// We need to remove certain leading characters from the path in order for our
+// leading ellipses trick to work.
+// However, we want to preserve all language characters (including CJK,
+// Cyrillic, etc.) and only remove specific punctuation that might interfere
+// with the ellipsis display.
+//
+// Only remove specific punctuation characters that might interfere with
+// ellipsis display. Keep all language characters (including CJK, Cyrillic
+//  etc.) and numbers.
+export const removeLeadingNonAlphanumeric = (path: string): string => path.replace(/^[/\\:*?"<>|]+/, "")
+
+===== sampling.ts =====
+/**
+ * Creates a sampled version of a function that only executes based on the provided sample rate.
+ *
+ * @param fn - The function to wrap with sampling
+ * @param sampleRate - The sampling rate as a decimal (e.g., 0.01 for 1%, 0.1 for 10%)
+ * @returns A new function that only executes the original function based on the sample rate
+ */
+export function createSampledFunction<T extends (...args: any[]) => any>(fn: T, sampleRate: number): T {
+	const clampedRate = Math.max(0, Math.min(1, sampleRate))
+
+	return ((...args: Parameters<T>) => {
+		if (Math.random() < clampedRate) {
+			return fn(...args)
+		}
+	}) as T
+}
+
+===== slash-commands.ts =====
+/* eslint no-misleading-character-class: 0 */
+// kilocode_change: this file was pulled from Cline and adjusted for us
+
+import { getAllModes } from "@roo/modes"
+import { getBasename } from "./kilocode/path-webview"
+import { ClineRulesToggles } from "@roo/cline-rules"
+
+export interface SlashCommand {
+	name: string
+	description?: string
+	section?: "default" | "custom"
+}
+
+// Create a function to get all supported slash commands
+export function getSupportedSlashCommands(
+	customModes?: any[],
+	localWorkflowToggles: ClineRulesToggles = {},
+	globalWorkflowToggles: ClineRulesToggles = {},
+): SlashCommand[] {
+	// Start with non-mode commands
+	const baseCommands: SlashCommand[] = [
+		{
+			name: "newtask",
+			description: "Create a new task with context from the current task",
+		},
+		{
+			name: "newrule",
+			description: "Create a new Kilo rule with context from your conversation",
+		},
+		{ name: "reportbug", description: "Create a KiloCode GitHub issue" },
+		{ name: "smol", description: "Condenses your current context window" },
+	]
+
+	// Add mode-switching commands dynamically
+	const modeCommands = getAllModes(customModes).map((mode) => ({
+		name: mode.slug,
+		description: `Switch to ${mode.name.replace(/^[💻🏗️❓🪲🪃]+ /, "")} mode`,
+	}))
+
+	// add workflow commands
+	const workflowCommands = getWorkflowCommands(localWorkflowToggles, globalWorkflowToggles)
+	return [...baseCommands, ...modeCommands, ...workflowCommands]
+}
+
+// Export a default instance for backward compatibility
+export const SUPPORTED_SLASH_COMMANDS = getSupportedSlashCommands()
+
+// Regex for detecting slash commands in text
+export const slashCommandRegex = /\/([a-zA-Z0-9_.-]+)(\s|$)/
+export const slashCommandRegexGlobal = new RegExp(slashCommandRegex.source, "g")
+
+/**
+ * Determines whether the slash command menu should be displayed based on text input
+ */
+export function shouldShowSlashCommandsMenu(text: string, cursorPosition: number): boolean {
+	const beforeCursor = text.slice(0, cursorPosition)
+
+	// first check if there is a slash before the cursor
+	const slashIndex = beforeCursor.lastIndexOf("/")
+
+	if (slashIndex === -1) {
+		return false
+	}
+
+	// check if slash is at the very beginning (with optional whitespace)
+	const textBeforeSlash = beforeCursor.slice(0, slashIndex)
+	if (!/^\s*$/.test(textBeforeSlash)) {
+		return false
+	}
+
+	// potential partial or full command
+	const textAfterSlash = beforeCursor.slice(slashIndex + 1)
+
+	// don't show menu if there's whitespace after the slash but before the cursor
+	if (/\s/.test(textAfterSlash)) {
+		return false
+	}
+
+	return true
+}
+
+function enabledWorkflowToggles(workflowToggles: ClineRulesToggles): SlashCommand[] {
+	return Object.entries(workflowToggles)
+		.filter(([_, enabled]) => enabled)
+		.map(([filePath, _]) => ({
+			name: getBasename(filePath),
+			section: "custom",
+		}))
+}
+
+export function getWorkflowCommands(
+	localWorkflowToggles: ClineRulesToggles = {},
+	globalWorkflowToggles: ClineRulesToggles = {},
+): SlashCommand[] {
+	return [...enabledWorkflowToggles(localWorkflowToggles), ...enabledWorkflowToggles(globalWorkflowToggles)]
+}
+
+/**
+ * Gets filtered slash commands that match the current input
+ */
+export function getMatchingSlashCommands(
+	query: string,
+	customModes?: any[],
+	localWorkflowToggles: ClineRulesToggles = {},
+	globalWorkflowToggles: ClineRulesToggles = {},
+): SlashCommand[] {
+	const commands = getSupportedSlashCommands(customModes, localWorkflowToggles, globalWorkflowToggles)
+
+	if (!query) {
+		return [...commands]
+	}
+
+	// filter commands that start with the query (case sensitive)
+	return commands.filter((cmd) => cmd.name.startsWith(query))
+}
+
+/**
+ * Insert a slash command at position or replace partial command
+ */
+export function insertSlashCommand(text: string, commandName: string): { newValue: string; commandIndex: number } {
+	const slashIndex = text.indexOf("/")
+
+	// where the command ends, at the end of entire text or first space
+	const commandEndIndex = text.indexOf(" ", slashIndex)
+
+	// replace the partial c
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== sourceMapInitializer.ts =====
+/**
+ * Source Map Initializer
+ *
+ * This utility ensures source maps are properly loaded in production builds.
+ * It attempts to preload source maps for all scripts on the page and
+ * sets up global error handlers to enhance errors with source maps.
+ *
+ * This implementation is compatible with VSCode's Content Security Policy.
+ */
+
+import { enhanceErrorWithSourceMaps } from "./sourceMapUtils"
+
+/**
+ * Initialize source map support for production builds
+ */
+export function initializeSourceMaps(): void {
+	if (process.env.NODE_ENV !== "production") {
+		// Only needed in production builds
+		return
+	}
+
+	console.debug("Initializing CSP-compatible source map support for production build")
+
+	// Set up global error handler
+	window.addEventListener("error", async (event) => {
+		if (event.error && event.error instanceof Error) {
+			try {
+				// Apply source maps to the error
+				const enhancedError = await enhanceErrorWithSourceMaps(event.error)
+
+				// Log the enhanced error
+				console.error("Source mapped error:", enhancedError)
+
+				// Don't prevent default handling - let the ErrorBoundary catch it
+			} catch (e) {
+				console.error("Error enhancing error with source maps:", e)
+			}
+		}
+	})
+
+	// Set up unhandled promise rejection handler
+	window.addEventListener("unhandledrejection", async (event) => {
+		if (event.reason && event.reason instanceof Error) {
+			try {
+				// Apply source maps to the error
+				const enhancedError = await enhanceErrorWithSourceMaps(event.reason)
+
+				// Log the enhanced error
+				console.error("Source mapped rejection:", enhancedError)
+			} catch (e) {
+				console.error("Error enhancing rejection with source maps:", e)
+			}
+		}
+	})
+
+	// Preload source maps for all scripts
+	try {
+		const scripts = document.getElementsByTagName("script")
+		for (let i = 0; i < scripts.length; i++) {
+			const script = scripts[i]
+			if (script.src) {
+				// Try multiple source map locations
+				const possibleMapUrls = [
+					`${script.src}.map`,
+					`${script.src}?source-map=true`,
+					script.src.replace(/\.js$/, ".js.map"),
+					script.src.replace(/\.js$/, ".map.json"),
+					script.src.replace(/\.js$/, ".sourcemap"),
+				]
+
+				// Preload all possible source map locations
+				for (const mapUrl of possibleMapUrls) {
+					const link = document.createElement("link")
+					link.rel = "preload"
+					link.as = "fetch"
+					link.href = mapUrl
+					link.crossOrigin = "anonymous"
+					document.head.appendChild(link)
+				}
+
+				// Also check for inline sourceMappingURL comments
+				fetch(script.src)
+					.then((response) => response.text())
+					.then((content) => {
+						const sourceMappingURLMatch = content.match(/\/\/[#@]\s*sourceMappingURL=([^\s]+)/)
+						if (sourceMappingURLMatch && sourceMappingURLMatch[1]) {
+							const sourceMappingURL = sourceMappingURLMatch[1]
+
+							// If it's not a data: URL, preload it
+							if (!sourceMappingURL.startsWith("data:")) {
+								const scriptUrlObj = new URL(script.src)
+								const baseUrl = scriptUrlObj.href.substring(0, scriptUrlObj.href.lastIndexOf("/") + 1)
+								const fullUrl = new URL(sourceMappingURL, baseUrl).href
+
+								const link = document.createElement("link")
+								link.rel = "preload"
+								link.as = "fetch"
+								link.href = fullUrl
+								link.crossOrigin = "anonymous"
+								document.head.appendChild(link)
+							}
+						}
+					})
+					.catch((e) => console.debug("Error checking for inline sourceMappingURL:", e))
+			}
+		}
+	} catch (e) {
+		console.error("Error preloading source maps:", e)
+	}
+}
+
+/**
+ * Expose source maps on the window object for debugging
+ */
+export function exposeSourceMapsForDebugging(): void {
+	if (process.env.NODE_ENV !== "production") {
+		return
+	}
+
+	try {
+		// Add a global function to manually apply source maps to an error
+		;(window as any).__applySourceMaps = async (error: Error) => {
+			if (!(error instanceof Error)) {
+				console.error("Not an Error object:", error)
+				return error
+			}
+			return await enhanceErrorWithSourceMaps(er
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== sourceMapUtils.ts =====
+import * as StackTrace from "stacktrace-js"
+
+/**
+ * Extended Error interface with source mapped stack trace
+ */
+export interface EnhancedError extends Error {
+	sourceMappedStack?: string
+	sourceMappedComponentStack?: string
+}
+
+/**
+ * Apply source maps to a stack trace using StackTrace.js
+ * Returns the original stack trace if source maps can't be applied
+ */
+export async function applySourceMapsToStack(stack: string): Promise<string> {
+	if (!stack) {
+		console.debug("applySourceMapsToStack: Empty stack trace provided")
+		return stack
+	}
+
+	console.debug("Original stack trace:", stack)
+
+	try {
+		// Create a temporary Error object with the provided stack
+		const tempError = new Error()
+		tempError.stack = stack
+
+		// Extract the error message (first line)
+		const errorMessage = stack.split("\n")[0]
+		console.debug("Error message:", errorMessage)
+
+		// Use StackTrace.js to get source mapped stack frames
+		const stackFrames = await StackTrace.fromError(tempError)
+		console.debug("StackTrace.js parsed frames:", stackFrames)
+
+		// Convert stack frames back to string format
+		const mappedFrames = stackFrames.map((frame: StackTrace.StackFrame) => {
+			const functionName = frame.functionName || "<anonymous>"
+			const fileName = frame.fileName || "unknown"
+			const lineNumber = frame.lineNumber || 0
+			const columnNumber = frame.columnNumber || 0
+
+			return `    at ${functionName} (${fileName}:${lineNumber}:${columnNumber})`
+		})
+
+		// Reconstruct the stack trace with the error message
+		const result = [errorMessage, ...mappedFrames].join("\n")
+		console.debug("Final mapped stack trace:", result)
+		return result
+	} catch (error) {
+		console.error("Error applying source maps with StackTrace.js:", error)
+		return stack // Return original stack on error
+	}
+}
+
+/**
+ * Apply source maps to a React component stack trace using StackTrace.js
+ */
+export async function applySourceMapsToComponentStack(componentStack: string): Promise<string> {
+	if (!componentStack) {
+		console.debug("applySourceMapsToComponentStack: Empty component stack provided")
+		return componentStack
+	}
+
+	console.debug("Original component stack:", componentStack)
+
+	try {
+		// Component stack has a different format than error stack
+		// Example: at ComponentName (file:///path/to/file.tsx:123:45)
+		const lines = componentStack.split("\n")
+		const mappedLines = await Promise.all(
+			lines.map(async (line) => {
+				// Skip empty lines
+				if (!line.trim()) return line
+
+				// Extract file path, line and column numbers
+				const match = line.match(/at\s+(.+?)\s+\((.+?):(\d+):(\d+)\)/)
+				if (!match) return line
+
+				const [_, componentName, fileName, lineNumber, columnNumber] = match
+				console.debug(`Processing component stack line:`, { componentName, fileName, lineNumber, columnNumber })
+
+				try {
+					// Create a synthetic stack frame for StackTrace.js
+					const syntheticError = new Error()
+					syntheticError.stack = `Error\n    at ${componentName} (${fileName}:${lineNumber}:${columnNumber})`
+
+					// Use StackTrace.js to resolve source maps
+					const stackFrames = await StackTrace.fromError(syntheticError)
+
+					if (stackFrames.length > 0) {
+						const frame = stackFrames[0]
+						const mappedFileName = frame.fileName || fileName
+						const mappedLineNumber = frame.lineNumber || parseInt(lineNumber, 10)
+						const mappedColumnNumber = frame.columnNumber || parseInt(columnNumber, 10)
+
+						return `at ${componentName} (${mappedFileName}:${mappedLineNumber}:${mappedColumnNumber})`
+					}
+				} catch (e) {
+					console.debug(`Error processing component stack line with StackTrace.js:`, e)
+				}
+
+				return line
+			}),
+		)
+
+		const result = mappedLines.join("\n")
+		console.debug("Final mapped component stack:", result)
+		return result
+	} catch (error) {
+		console.error("Error applying source maps to component stack with StackTrace.js:", error)
+		return componentStack
+	}
+}
+
+/**
+ * Enhance an Error object with source mapped stack trace and component stack
+ */
+export function 
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== test-utils.tsx =====
+import React from "react"
+import { render, RenderOptions } from "@testing-library/react"
+
+import { TooltipProvider } from "@src/components/ui/tooltip"
+import { STANDARD_TOOLTIP_DELAY } from "@src/components/ui/standard-tooltip"
+
+interface AllTheProvidersProps {
+	children: React.ReactNode
+}
+
+const AllTheProviders = ({ children }: AllTheProvidersProps) => {
+	return <TooltipProvider delayDuration={STANDARD_TOOLTIP_DELAY}>{children}</TooltipProvider>
+}
+
+const customRender = (ui: React.ReactElement, options?: Omit<RenderOptions, "wrapper">) =>
+	render(ui, { wrapper: AllTheProviders, ...options })
+
+// re-export everything
+export * from "@testing-library/react"
+
+// override render method
+export { customRender as render }
+
+===== textMateToHljs.ts =====
+const hljsToTextMate: Record<string, string[]> = {
+	".hljs-comment": ["comment"],
+	".hljs-tag": ["tag"],
+	".hljs-doctag": ["keyword"],
+	".hljs-keyword": ["keyword"],
+	".hljs-meta .hljs-keyword": ["keyword"],
+	".hljs-template-tag": ["keyword"],
+	".hljs-template-variable": ["keyword"],
+	".hljs-type": ["keyword"],
+	".hljs-variable.language_": ["keyword"],
+	".hljs-title": ["title", "function", "class"],
+	".hljs-title.class_": ["title", "function", "class", "variable"],
+	".hljs-title.class_.inherited__": ["title", "function", "class", "variable"],
+	".hljs-title.function_": ["support.function", "entity.name.function", "title", "function", "class"],
+	".hljs-built_in": ["support.function", "entity.name.function", "title", "function", "class"],
+	".hljs-name": ["constant"],
+	".hljs-attr": ["variable", "operator", "number"],
+	".hljs-attribute": ["attribute", "variable", "operator", "number"],
+	".hljs-literal": ["variable", "operator", "number"],
+	".hljs-meta": ["variable", "operator", "number"],
+	".hljs-number": ["constant.numeric", "number", "variable", "operator"],
+	".hljs-operator": ["variable", "operator", "number"],
+	".hljs-variable": ["variable", "operator", "number"],
+	".hljs-selector-attr": ["variable", "operator", "number"],
+	".hljs-selector-class": ["variable", "operator", "number"],
+	".hljs-selector-id": ["variable", "operator", "number"],
+	".hljs-regexp": ["string"],
+	".hljs-string": ["string"],
+	".hljs-meta .hljs-string": ["string"],
+	".hljs-params": ["variable", "operator", "number"],
+}
+
+type FullColorTheme = {
+	rules?: {
+		token?: string
+		foreground?: string
+	}[]
+}
+
+function constructTheme(tmTheme: FullColorTheme): Record<string, string> {
+	const rules = tmTheme["rules"] || []
+
+	const tokenToForeground: Record<string, string> = {}
+	rules.forEach(({ token, foreground }) => {
+		if (!foreground || !token) {
+			return
+		}
+		tokenToForeground[token] = foreground
+	})
+
+	const theme: Record<string, string> = {}
+	Object.keys(hljsToTextMate).forEach((className) => {
+		const tokens = hljsToTextMate[className]
+		for (const scope of tokens) {
+			if (tokenToForeground[scope]) {
+				theme[className] = tokenToForeground[scope]
+				break
+			}
+		}
+	})
+
+	if (Object.keys(theme).length === 0) {
+		return fallbackTheme()
+	}
+
+	return theme
+}
+
+function fallbackTheme() {
+	const styles = getComputedStyle(document.body)
+	const backgroundColor = styles.getPropertyValue("--vscode-editor-background")
+	const { r, g, b } = parseHexColor(backgroundColor)
+	const avg = (r + g + b) / 3
+
+	return avg >= 128
+		? {
+				".hljs-comment": "#008000",
+				".hljs-doctag": "#0000ff",
+				".hljs-keyword": "#0000ff",
+				".hljs-meta .hljs-keyword": "#0000ff",
+				".hljs-template-tag": "#0000ff",
+				".hljs-template-variable": "#0000ff",
+				".hljs-type": "#0000ff",
+				".hljs-variable.language_": "#0000ff",
+				".hljs-title.class_": "#001080",
+				".hljs-title.class_.inherited__": "#001080",
+				".hljs-title.function_": "#795E26",
+				".hljs-built_in": "#795E26",
+				".hljs-attr": "#001080",
+				".hljs-attribute": "#001080",
+				".hljs-literal": "#001080",
+				".hljs-meta": "#001080",
+				".hljs-number": "#098658",
+				".hljs-operator": "#001080",
+				".hljs-variable": "#001080",
+				".hljs-selector-attr": "#001080",
+				".hljs-selector-class": "#001080",
+				".hljs-selector-id": "#001080",
+				".hljs-regexp": "#a31515",
+				".hljs-string": "#a31515",
+				".hljs-meta .hljs-string": "#a31515",
+				".hljs-params": "#001080",
+			}
+		: {
+				".hljs-comment": "#6A9955",
+				".hljs-doctag": "#569cd6",
+				".hljs-keyword": "#569cd6",
+				".hljs-meta .hljs-keyword": "#569cd6",
+				".hljs-template-tag": "#569cd6",
+				".hljs-template-variable": "#569cd6",
+				".hljs-type": "#569cd6",
+				".hljs-variable.language_": "#569cd6",
+				".hljs-title.class_": "#9CDCFE",
+				".hljs-title.class_.inherited__": "#9CDCFE",
+				".hljs-title.function_": "#DCDCAA",
+				".hljs-built_in": "#DCDCAA",
+				".hljs-attr": "#9CDCFE",
+				".hljs-attribute": "#9CDCFE",
+				".hljs-literal": "#9CDCFE",
+			
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== url.ts =====
+export const isValidUrl = (urlString: string): boolean => {
+	try {
+		new URL(urlString)
+		return true
+	} catch {
+		return false
+	}
+}
+
+===== useDebounceEffect.ts =====
+import { useEffect, useRef } from "react"
+
+type VoidFn = () => void
+
+/**
+ * Runs `effectRef.current()` after `delay` ms whenever any of the `deps` change,
+ * but cancels/re-schedules if they change again before the delay.
+ */
+export function useDebounceEffect(effect: VoidFn, delay: number, deps: any[]) {
+	const callbackRef = useRef<VoidFn>(effect)
+	const timeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+	// Keep callbackRef current
+	useEffect(() => {
+		callbackRef.current = effect
+	}, [effect])
+
+	useEffect(() => {
+		// Clear any queued call
+		if (timeoutRef.current) {
+			clearTimeout(timeoutRef.current)
+		}
+
+		// Schedule a new call
+		timeoutRef.current = setTimeout(() => {
+			// always call the *latest* version of effect
+			callbackRef.current()
+		}, delay)
+
+		// Cleanup on unmount or next effect
+		return () => {
+			if (timeoutRef.current) {
+				clearTimeout(timeoutRef.current)
+			}
+		}
+
+		// We want to re‐schedule if any item in `deps` changed,
+		// or if `delay` changed.
+
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [delay, ...deps])
+}
+
+===== validate.ts =====
+import i18next from "i18next"
+
+import {
+	type ProviderSettings,
+	type OrganizationAllowList,
+	type ProviderName,
+	modelIdKeysByProvider,
+	isProviderName,
+	isDynamicProvider,
+	isFauxProvider,
+	isCustomProvider,
+} from "@roo-code/types"
+
+import type { RouterModels } from "@roo/api"
+
+export function validateApiConfiguration(
+	apiConfiguration: ProviderSettings,
+	routerModels?: RouterModels,
+	organizationAllowList?: OrganizationAllowList,
+): string | undefined {
+	const keysAndIdsPresentErrorMessage = validateModelsAndKeysProvided(apiConfiguration)
+
+	if (keysAndIdsPresentErrorMessage) {
+		return keysAndIdsPresentErrorMessage
+	}
+
+	const organizationAllowListError = validateProviderAgainstOrganizationSettings(
+		apiConfiguration,
+		organizationAllowList,
+	)
+
+	if (organizationAllowListError) {
+		return organizationAllowListError.message
+	}
+
+	return validateDynamicProviderModelId(apiConfiguration, routerModels)
+}
+
+function validateModelsAndKeysProvided(apiConfiguration: ProviderSettings): string | undefined {
+	switch (apiConfiguration.apiProvider) {
+		case "openrouter":
+			if (!apiConfiguration.openRouterApiKey) {
+				return i18next.t("settings:validation.apiKey")
+			}
+			break
+		case "glama":
+			if (!apiConfiguration.glamaApiKey) {
+				return i18next.t("settings:validation.apiKey")
+			}
+			break
+		case "unbound":
+			if (!apiConfiguration.unboundApiKey) {
+				return i18next.t("settings:validation.apiKey")
+			}
+			break
+		case "requesty":
+			if (!apiConfiguration.requestyApiKey) {
+				return i18next.t("settings:validation.apiKey")
+			}
+			break
+		case "deepinfra":
+			if (!apiConfiguration.deepInfraApiKey) {
+				return i18next.t("settings:validation.apiKey")
+			}
+			break
+		case "litellm":
+			if (!apiConfiguration.litellmApiKey) {
+				return i18next.t("settings:validation.apiKey")
+			}
+			break
+		case "anthropic":
+			if (!apiConfiguration.apiKey) {
+				return i18next.t("settings:validation.apiKey")
+			}
+			break
+		case "bedrock":
+			if (!apiConfiguration.awsRegion) {
+				return i18next.t("settings:validation.awsRegion")
+			}
+			break
+		case "vertex":
+			if (!apiConfiguration.vertexProjectId || !apiConfiguration.vertexRegion) {
+				return i18next.t("settings:validation.googleCloud")
+			}
+			break
+		case "gemini":
+			if (!apiConfiguration.geminiApiKey) {
+				return i18next.t("settings:validation.apiKey")
+			}
+			break
+		// kilocode_change start
+		case "gemini-cli":
+			// OAuth-based provider, no API key validation needed
+			break
+		// kilocode_change end
+		case "openai-native":
+			if (!apiConfiguration.openAiNativeApiKey) {
+				return i18next.t("settings:validation.apiKey")
+			}
+			break
+		case "mistral":
+			if (!apiConfiguration.mistralApiKey) {
+				return i18next.t("settings:validation.apiKey")
+			}
+			break
+		case "openai":
+			if (!apiConfiguration.openAiBaseUrl || !apiConfiguration.openAiApiKey || !apiConfiguration.openAiModelId) {
+				return i18next.t("settings:validation.openAi")
+			}
+			break
+		case "ollama":
+			if (!apiConfiguration.ollamaModelId) {
+				return i18next.t("settings:validation.modelId")
+			}
+			break
+		case "lmstudio":
+			if (!apiConfiguration.lmStudioModelId) {
+				return i18next.t("settings:validation.modelId")
+			}
+			break
+		case "vscode-lm":
+			if (!apiConfiguration.vsCodeLmModelSelector) {
+				return i18next.t("settings:validation.modelSelector")
+			}
+			break
+		// kilocode_change start
+		case "kilocode":
+			if (!apiConfiguration.kilocodeToken) {
+				return i18next.t("settings:validation.apiKey")
+			}
+			break
+		// kilocode_change end
+		case "huggingface":
+			if (!apiConfiguration.huggingFaceApiKey) {
+				return i18next.t("settings:validation.apiKey")
+			}
+			if (!apiConfiguration.huggingFaceModelId) {
+				return i18next.t("settings:validation.modelId")
+			}
+			break
+		case "cerebras":
+			if (!apiConfiguration.cerebrasApiKey) {
+				return i18next.t("settings:validation.apiKey")
+			}
+			break
+		case "fireworks":
+			if (!apiConfiguration.fireworksApiKey) {
+				return i18next.t("settings:validation.apiKey")
+			}
+	
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== vscode.ts =====
+import type { WebviewApi } from "vscode-webview"
+
+import { MaybeTypedWebviewMessage as WebviewMessage } from "@roo/WebviewMessage" // kilocode_change - using MaybeTypedWebviewMessage
+
+/**
+ * A utility wrapper around the acquireVsCodeApi() function, which enables
+ * message passing and state management between the webview and extension
+ * contexts.
+ *
+ * This utility also enables webview code to be run in a web browser-based
+ * dev server by using native web browser features that mock the functionality
+ * enabled by acquireVsCodeApi.
+ */
+class VSCodeAPIWrapper {
+	private readonly vsCodeApi: WebviewApi<unknown> | undefined
+
+	constructor() {
+		// Check if the acquireVsCodeApi function exists in the current development
+		// context (i.e. VS Code development window or web browser)
+		if (typeof acquireVsCodeApi === "function") {
+			this.vsCodeApi = acquireVsCodeApi()
+		}
+	}
+
+	/**
+	 * Post a message (i.e. send arbitrary data) to the owner of the webview.
+	 *
+	 * @remarks When running webview code inside a web browser, postMessage will instead
+	 * log the given message to the console.
+	 *
+	 * @param message Arbitrary data (must be JSON serializable) to send to the extension context.
+	 */
+	public postMessage(message: WebviewMessage) {
+		if (this.vsCodeApi) {
+			this.vsCodeApi.postMessage(message)
+		} else {
+			console.log(message)
+		}
+	}
+
+	/**
+	 * Get the persistent state stored for this webview.
+	 *
+	 * @remarks When running webview source code inside a web browser, getState will retrieve state
+	 * from local storage (https://developer.mozilla.org/en-US/docs/Web/API/Window/localStorage).
+	 *
+	 * @return The current state or `undefined` if no state has been set.
+	 */
+	public getState(): unknown | undefined {
+		if (this.vsCodeApi) {
+			return this.vsCodeApi.getState()
+		} else {
+			const state = localStorage.getItem("vscodeState")
+			return state ? JSON.parse(state) : undefined
+		}
+	}
+
+	/**
+	 * Set the persistent state stored for this webview.
+	 *
+	 * @remarks When running webview source code inside a web browser, setState will set the given
+	 * state using local storage (https://developer.mozilla.org/en-US/docs/Web/API/Window/localStorage).
+	 *
+	 * @param newState New persisted state. This must be a JSON serializable object. Can be retrieved
+	 * using {@link getState}.
+	 *
+	 * @return The new state.
+	 */
+	public setState<T extends unknown | undefined>(newState: T): T {
+		if (this.vsCodeApi) {
+			return this.vsCodeApi.setState(newState)
+		} else {
+			localStorage.setItem("vscodeState", JSON.stringify(newState))
+			return newState
+		}
+	}
+}
+
+// Exports class singleton to prevent multiple invocations of acquireVsCodeApi.
+export const vscode = new VSCodeAPIWrapper()
+
+// RPC "invoke" simple (request/response avec id)
+type Pending = { resolve: (v: any) => void; reject: (e: any) => void }
+const pending = new Map<string, Pending>()
+
+function uid() {
+	return Math.random().toString(36).slice(2)
+}
+
+export function invoke<T = any>(command: string, payload?: any): Promise<T> {
+	const id = uid()
+	return new Promise<T>((resolve, reject) => {
+		pending.set(id, { resolve, reject })
+		// Type assertion to bypass TypeScript check for RPC messages
+		;(vscode.postMessage as any)({ __rpc: true, id, command, payload })
+		// timeout safe-guard 8s
+		setTimeout(() => {
+			if (pending.has(id)) {
+				pending.delete(id)
+				reject(new Error(`RPC timeout for ${command}`))
+			}
+		}, 8000)
+	})
+}
+
+// Handler messages depuis l'extension
+window.addEventListener("message", (event) => {
+	const msg = event.data
+	if (!msg || !msg.__rpc) return
+	const p = pending.get(msg.replyTo)
+	if (!p) return
+	pending.delete(msg.replyTo)
+	if (msg.error) p.reject(new Error(msg.error))
+	else p.resolve(msg.result)
+})
+
+// kilocode_change start
+// Make vscode available globally - this allows the playwright tests
+// to post messages directly so we can setup provider credentials
+// without having to go through the Settings UI in every test.
+if (typeof window !== "undefined") {
+	;(window as unkno
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== kilocode/mcp.ts =====
+// kilocode_change: imported from Cline
+import { McpMarketplaceCatalog } from "../../../../src/shared/kilocode/mcp"
+
+/**
+ * Attempts to convert an MCP server name to its display name using the marketplace catalog
+ * @param serverName The server name/ID to look up
+ * @param mcpMarketplaceCatalog The marketplace catalog containing server metadata
+ * @returns The display name if found in catalog, otherwise returns the original server name
+ */
+export function getMcpServerDisplayName(serverName: string, mcpMarketplaceCatalog: McpMarketplaceCatalog): string {
+	// Find matching item in marketplace catalog
+	const catalogItem = mcpMarketplaceCatalog.items.find((item) => item.mcpId === serverName)
+
+	// Return display name if found, otherwise return original server name
+	return catalogItem?.name || serverName
+}
+
+===== kilocode/path-webview.ts =====
+export function getBasename(path: string) {
+	return path.replace(/^.*[/\\]/, "")
+}
+
+export const getExtension = (filename: string): string => {
+	if (filename.startsWith(".") && !filename.includes(".", 1)) return ""
+	const match = filename.match(/\.[^.]+$/)
+	return match ? match[0].toLowerCase() : ""
+}
+
+===== kilocode/useKiloIdentity.tsx =====
+import { useEffect, useState } from "react"
+import { ProfileDataResponsePayload } from "@roo/WebviewMessage"
+import { vscode } from "@/utils/vscode"
+
+export function useKiloIdentity(kilocodeToken: string, machineId: string) {
+	const [kiloIdentity, setKiloIdentity] = useState("")
+	useEffect(() => {
+		const handleMessage = (event: MessageEvent) => {
+			if (event.data.type === "profileDataResponse") {
+				const payload = event.data.payload as ProfileDataResponsePayload | undefined
+				const success = payload?.success || false
+				const tokenFromMessage = payload?.data?.kilocodeToken || ""
+				const email = payload?.data?.user?.email || ""
+				if (!success) {
+					console.error("KILOTEL: Failed to identify Kilo user, message doesn't indicate success:", payload)
+				} else if (tokenFromMessage !== kilocodeToken) {
+					console.error("KILOTEL: Failed to identify Kilo user, token mismatch:", payload)
+				} else if (!email) {
+					console.error("KILOTEL: Failed to identify Kilo user, email missing:", payload)
+				} else {
+					console.debug("KILOTEL: Kilo user identified:", email)
+					setKiloIdentity(email)
+					window.removeEventListener("message", handleMessage)
+				}
+			}
+		}
+
+		if (kilocodeToken) {
+			console.debug("KILOTEL: fetching profile...")
+			window.addEventListener("message", handleMessage)
+			vscode.postMessage({
+				type: "fetchProfileDataRequest",
+			})
+		} else {
+			console.debug("KILOTEL: no Kilo user")
+			setKiloIdentity("")
+		}
+
+		return () => {
+			window.removeEventListener("message", handleMessage)
+		}
+	}, [kilocodeToken])
+	return kiloIdentity || machineId
+}
+
+===== timeline/calculateTaskTimelineSizes.ts =====
+import type { ClineMessage } from "@roo-code/types"
+
+// Hard-coded constants for dynamic sizing
+export const MAX_HEIGHT_PX = 26
+const AVERAGE_REQUEST_TIME_MS = 3000 // on average
+const MIN_WIDTH_PX = 8
+const MAX_WIDTH_PX = 32
+const MIN_HEIGHT_PX = 8
+const TOP_PADDING_PX = 4
+
+export interface MessageSizeData {
+	width: number
+	height: number
+	contentLength: number
+	timingMs: number | null
+}
+
+interface NormalizationBounds {
+	maxContentLength: number
+	maxTiming: number
+}
+
+/**
+ * Calculate dynamic sizes for all messages
+ * Width is always based on timing, height is always based on content
+ */
+export function calculateTaskTimelineSizes(messages: (ClineMessage | ClineMessage[])[]): MessageSizeData[] {
+	if (messages.length === 0) {
+		return []
+	}
+
+	// Calculate raw data for all messages
+	const rawData = messages.map((message, index) => {
+		const contentLength = calculateMessageContentLength(message)
+		const timingMs = calculateMessageTiming(message, messages[index + 1] || null)
+		return { contentLength, timingMs }
+	})
+
+	const { maxContentLength, maxTiming } = findMinMaxBoundingValues(rawData)
+
+	return rawData.map(({ contentLength, timingMs }, index) => {
+		// Normalize content length (0-1 scale) - used for HEIGHT
+		const contentRatio = Math.min(1, contentLength / Math.max(1, maxContentLength))
+
+		// Normalize timing (0-1 scale, with fallback to average) - used for WIDTH
+		// For the last message, use minimum width since it's still active
+		const effectiveTiming = index === messages.length - 1 ? MIN_WIDTH_PX : (timingMs ?? AVERAGE_REQUEST_TIME_MS)
+		const timingRatio = Math.min(1, effectiveTiming / Math.max(1, maxTiming))
+
+		const width = MIN_WIDTH_PX + timingRatio * (MAX_WIDTH_PX - MIN_WIDTH_PX)
+		const height = MIN_HEIGHT_PX + contentRatio * (MAX_HEIGHT_PX - MIN_HEIGHT_PX - TOP_PADDING_PX)
+
+		return {
+			width: Math.round(width),
+			height: Math.round(height),
+			contentLength,
+			timingMs,
+		}
+	})
+}
+
+function calculateMessageContentLength(message: ClineMessage | ClineMessage[]): number {
+	if (Array.isArray(message)) {
+		return message.reduce((total, msg) => total + calculateMessageContentLength(msg), 0)
+	}
+
+	let length = 0
+	length += message.text?.length ?? 0
+	length += message.reasoning?.length ?? 0
+	length += (message.images?.length ?? 0) * 100 // Each image counts as X characters
+	length += message.contextCondense?.summary.length ?? 0
+
+	return Math.max(1, length) // Ensure minimum of 1
+}
+
+function calculateMessageTiming(
+	currentMessage: ClineMessage | ClineMessage[],
+	nextMessage: ClineMessage | ClineMessage[] | null,
+): number | null {
+	if (!nextMessage) return null // Last message has no "next" message
+
+	const currentTs = Array.isArray(currentMessage) ? currentMessage[0]?.ts : currentMessage.ts
+	const nextTs = Array.isArray(nextMessage) ? nextMessage[0]?.ts : nextMessage.ts
+	if (!currentTs || !nextTs) return null
+
+	return Math.max(0, nextTs - currentTs) // Time until next message appeared
+}
+
+function findMinMaxBoundingValues(
+	rawData: Array<{ contentLength: number; timingMs: number | null }>,
+): NormalizationBounds {
+	const maxContentLength = Math.max(...rawData.map((d) => d.contentLength))
+	const validTimings = rawData.map((d) => d.timingMs).filter((t): t is number => t !== null)
+	const maxTiming = validTimings.length > 0 ? Math.max(...validTimings) : AVERAGE_REQUEST_TIME_MS
+
+	return { maxContentLength, maxTiming }
+}
+
+===== timeline/consolidateMessagesForTimeline.ts =====
+import type { ClineMessage } from "@roo-code/types"
+import { combineApiRequests } from "@roo/combineApiRequests"
+import { combineCommandSequences } from "@roo/combineCommandSequences"
+import { shouldShowInTimeline } from "../messageColors"
+
+/**
+ * Processes grouped messages using the existing shared utilities:
+ * 1. Flattens grouped messages to individual messages
+ * 2. Combines related messages (API requests, command sequences) using existing utilities
+ * 3. Filters out unwanted message types
+ * 4. Returns processed messages with original index mapping
+ */
+export function consolidateMessagesForTimeline(groupedMessages: (ClineMessage | ClineMessage[])[]): {
+	processedMessages: ClineMessage[]
+	messageToOriginalIndex: Map<ClineMessage, number>
+} {
+	if (groupedMessages.length <= 1) {
+		return {
+			processedMessages: [],
+			messageToOriginalIndex: new Map(),
+		}
+	}
+
+	// Flatten grouped messages to individual messages
+	const flatMessages: ClineMessage[] = []
+	const messageToOriginalIndex: Map<ClineMessage, number> = new Map()
+
+	// Skip first message like Cline
+	for (let i = 1; i < groupedMessages.length; i++) {
+		const messageOrGroup = groupedMessages[i]
+		if (Array.isArray(messageOrGroup)) {
+			// Handle grouped messages - add each individual message
+			messageOrGroup.forEach((msg) => {
+				flatMessages.push(msg)
+				messageToOriginalIndex.set(msg, i)
+			})
+		} else {
+			// Handle single message
+			flatMessages.push(messageOrGroup)
+			messageToOriginalIndex.set(messageOrGroup, i)
+		}
+	}
+
+	// Apply existing shared utilities for message combination
+	const afterCommandCombining = combineCommandSequences(flatMessages)
+	const combinedMessages = combineApiRequests(afterCommandCombining)
+
+	// For combined messages that aren't in the original mapping,
+	// find their original index by looking at their timestamp
+	const updatedMapping = new Map(messageToOriginalIndex)
+	combinedMessages.forEach((msg: ClineMessage) => {
+		if (!updatedMapping.has(msg)) {
+			// Find the original message with the same timestamp
+			const originalMsg = flatMessages.find((original) => original.ts === msg.ts)
+			if (originalMsg && messageToOriginalIndex.has(originalMsg)) {
+				updatedMapping.set(msg, messageToOriginalIndex.get(originalMsg)!)
+			}
+		}
+	})
+	const processedMessages = combinedMessages.filter(shouldShowInTimeline)
+
+	return {
+		processedMessages,
+		messageToOriginalIndex: updatedMapping,
+	}
+}
+
+===== timeline/mockData.ts =====
+import type { ClineMessage } from "@roo-code/types"
+import seedrandom from "seedrandom"
+
+// Fixed base timestamp for consistent snapshots (January 1, 2024, 12:00:00 UTC)
+const BASE_TIMESTAMP = 1704110400000
+const rng = seedrandom("TimelineData")
+
+export function generateSampleTimelineData(): ClineMessage[] {
+	const messages: ClineMessage[] = []
+
+	const messageTemplates = [
+		{
+			type: "ask",
+			ask: "command",
+			texts: ["Create a React component", "Build a todo app", "Fix the login bug", "Add dark mode support"],
+		},
+		{
+			type: "say",
+			say: "text",
+			texts: [
+				"I'll help you with that",
+				"Let me analyze the requirements",
+				"I'll start by examining the code",
+				"Let me understand the current setup",
+			],
+		},
+		{
+			type: "ask",
+			ask: "tool",
+			texts: [
+				JSON.stringify({ tool: "read_file", path: "src/App.tsx" }),
+				JSON.stringify({ tool: "list_files", path: "src/components" }),
+				JSON.stringify({ tool: "search_files", query: "useState" }),
+				JSON.stringify({ tool: "read_file", path: "package.json" }),
+			],
+		},
+		{
+			type: "say",
+			say: "command_output",
+			texts: ["File created successfully", "Changes applied", "Build completed", "Tests passed"],
+		},
+		{ type: "say", say: "checkpoint_saved", texts: ["Checkpoint saved", "Progress saved", "State preserved"] },
+		{
+			type: "say",
+			say: "completion_result",
+			texts: ["Task completed successfully!", "All done!", "Implementation finished", "Ready to use"],
+		},
+	]
+
+	for (let cycle = 0; cycle < 8; cycle++) {
+		messageTemplates.forEach((template, i) => {
+			const randomText = template.texts[Math.floor(rng() * template.texts.length)]
+			messages.push({
+				ts: BASE_TIMESTAMP + (cycle * 8 + i) * (1000 + rng() * 3000),
+				type: template.type as "ask" | "say",
+				...(template.ask && { ask: template.ask as any }),
+				...(template.say && { say: template.say as any }),
+				text: randomText,
+			})
+		})
+	}
+
+	return messages
+}
+
+===== timeline/__tests__/consolidateMessagesForTimeline.test.ts =====
+import type { ClineMessage } from "@roo-code/types"
+import { consolidateMessagesForTimeline } from "../consolidateMessagesForTimeline"
+
+function createMessage(id: string): ClineMessage {
+	return {
+		ts: Date.now(),
+		type: "say",
+		say: "text",
+		text: `Message ${id}`,
+	}
+}
+
+describe("consolidateMessagesForTimeline", () => {
+	it("processes messages correctly", () => {
+		const messages = [createMessage("1"), createMessage("2"), createMessage("3")]
+		const result = consolidateMessagesForTimeline(messages)
+
+		expect(result.processedMessages).toHaveLength(2) // First message is skipped
+		expect(result.messageToOriginalIndex).toBeInstanceOf(Map)
+		expect(result.messageToOriginalIndex.size).toBe(2)
+	})
+
+	it("returns empty arrays for single message", () => {
+		const messages = [createMessage("1")]
+		const result = consolidateMessagesForTimeline(messages)
+
+		expect(result.processedMessages).toHaveLength(0)
+		expect(result.messageToOriginalIndex.size).toBe(0)
+	})
+
+	it("maps messages to correct original indices", () => {
+		const messages = [createMessage("1"), createMessage("2"), createMessage("3")]
+		const result = consolidateMessagesForTimeline(messages)
+
+		// First message (index 0) is skipped, so we should have mappings for indices 1 and 2
+		const indices = Array.from(result.messageToOriginalIndex.values())
+		expect(indices).toContain(1)
+		expect(indices).toContain(2)
+		expect(indices).not.toContain(0)
+	})
+
+	it("handles grouped messages correctly", () => {
+		const groupedMessages = [createMessage("1"), [createMessage("2a"), createMessage("2b")], createMessage("3")]
+		const result = consolidateMessagesForTimeline(groupedMessages)
+
+		expect(result.processedMessages.length).toBeGreaterThan(0)
+		expect(result.messageToOriginalIndex.size).toBeGreaterThan(0)
+	})
+})
+
+===== timeline/__tests__/dynamicSizing.test.ts =====
+import { calculateTaskTimelineSizes } from "../calculateTaskTimelineSizes"
+import type { ClineMessage } from "@roo-code/types"
+
+describe("calculateTaskTimelineSizes", () => {
+	const createTestMessage = (
+		text: string,
+		timestamp: number,
+		type: "ask" | "say" = "say",
+		say?: string,
+	): ClineMessage => ({
+		ts: timestamp,
+		type,
+		text,
+		...(type === "say" && say ? { say: say as any } : {}),
+	})
+
+	it("should return empty array for empty messages", () => {
+		const result = calculateTaskTimelineSizes([])
+		expect(result).toEqual([])
+	})
+
+	it("should calculate sizes based on content length and timing", () => {
+		const baseTime = 1000
+		const messages = [
+			createTestMessage("Short", baseTime),
+			createTestMessage("This is a much longer message with more content", baseTime + 2000), // 2s later
+			createTestMessage("Medium", baseTime + 8000), // 6s later
+		]
+
+		const result = calculateTaskTimelineSizes(messages)
+
+		expect(result).toHaveLength(3)
+
+		// First message was active for 2s (until second message)
+		expect(result[0].timingMs).toBe(2000)
+		expect(result[0].contentLength).toBe(5) // "Short"
+
+		// Second message was active for 6s (until third message)
+		expect(result[1].timingMs).toBe(6000)
+		expect(result[1].contentLength).toBe(47) // Longer message
+
+		// Third message has no timing (last message)
+		expect(result[2].timingMs).toBeNull()
+		expect(result[2].contentLength).toBe(6) // "Medium"
+
+		// Verify sizing logic - width based on timing, height based on content
+		expect(result[1].width).toBeGreaterThan(result[0].width) // 6s > 2s
+		expect(result[2].width).toBeLessThan(result[1].width) // Last message should use minimum width
+		expect(result[1].height).toBeGreaterThan(result[0].height) // Longer content
+		expect(result[1].height).toBeGreaterThan(result[2].height) // Longer content than "Medium"
+	})
+
+	it("should respect min/max size constraints", () => {
+		const messages = [
+			createTestMessage("X", 1000), // Very short
+			createTestMessage("X".repeat(1000), 2000), // Very long
+		]
+
+		const result = calculateTaskTimelineSizes(messages)
+
+		result.forEach((size) => {
+			expect(size.width).toBeGreaterThanOrEqual(8) // MIN_WIDTH_PX
+			expect(size.width).toBeLessThanOrEqual(32) // MAX_WIDTH_PX
+			expect(size.height).toBeGreaterThanOrEqual(8) // MIN_HEIGHT_PX
+			expect(size.height).toBeLessThanOrEqual(24) // MAX_HEIGHT_PX
+		})
+	})
+
+	it("should handle array messages correctly", () => {
+		const messages = [
+			[createTestMessage("First", 1000), createTestMessage("Second", 1000)],
+			createTestMessage("Single", 2000),
+		]
+
+		const result = calculateTaskTimelineSizes(messages)
+
+		expect(result).toHaveLength(2)
+		// Array message should combine content lengths
+		expect(result[0].contentLength).toBe(11) // "First" + "Second" = 5 + 6
+		expect(result[1].contentLength).toBe(6) // "Single"
+	})
+
+	it("should handle messages with additional content types", () => {
+		const messageWithReasoning: ClineMessage = {
+			ts: 1000,
+			type: "say",
+			text: "Main text",
+			reasoning: "Some reasoning",
+			images: ["image1", "image2"],
+		}
+
+		const messages = [messageWithReasoning]
+		const result = calculateTaskTimelineSizes(messages)
+
+		// Should include text + reasoning + images (2 * 100)
+		const expectedLength = "Main text".length + "Some reasoning".length + 2 * 100
+		expect(result[0].contentLength).toBe(expectedLength)
+	})
+
+	it("should handle single message correctly", () => {
+		const messages = [createTestMessage("Single message", 1000)]
+		const result = calculateTaskTimelineSizes(messages)
+
+		expect(result).toHaveLength(1)
+		expect(result[0].timingMs).toBeNull() // Last (and only) message has no timing
+		expect(result[0].contentLength).toBe(14) // "Single message"
+		expect(result[0].width).toBeGreaterThanOrEqual(8)
+		expect(result[0].height).toBeGreaterThanOrEqual(8)
+	})
+})
+
+===== __tests__/command-parser.spec.ts =====
+import { extractPatternsFromCommand } from "../command-parser"
+
+describe("extractPatternsFromCommand", () => {
+	it("should extract simple command pattern", () => {
+		const patterns = extractPatternsFromCommand("ls")
+		expect(patterns).toEqual(["ls"])
+	})
+
+	it("should extract command with subcommand", () => {
+		const patterns = extractPatternsFromCommand("git push origin main")
+		expect(patterns).toEqual(["git", "git push", "git push origin"])
+	})
+
+	it("should stop at flags", () => {
+		const patterns = extractPatternsFromCommand("git commit -m 'test'")
+		expect(patterns).toEqual(["git", "git commit"])
+	})
+
+	it("should stop at paths", () => {
+		const patterns = extractPatternsFromCommand("cd /usr/local/bin")
+		expect(patterns).toEqual(["cd"])
+	})
+
+	it("should handle pipes", () => {
+		const patterns = extractPatternsFromCommand("ls -la | grep test")
+		expect(patterns).toEqual(["grep", "grep test", "ls"])
+	})
+
+	it("should handle && operator", () => {
+		const patterns = extractPatternsFromCommand("npm install && git push origin main")
+		expect(patterns).toEqual(["git", "git push", "git push origin", "npm", "npm install"])
+	})
+
+	it("should handle || operator", () => {
+		const patterns = extractPatternsFromCommand("npm test || npm run test:ci")
+		expect(patterns).toEqual(["npm", "npm run", "npm test"])
+	})
+
+	it("should handle semicolon separator", () => {
+		const patterns = extractPatternsFromCommand("cd src; npm install")
+		expect(patterns).toEqual(["cd", "cd src", "npm", "npm install"])
+	})
+
+	it("should skip numeric commands", () => {
+		const patterns = extractPatternsFromCommand("0 total")
+		expect(patterns).toEqual([])
+	})
+
+	it("should handle empty command", () => {
+		const patterns = extractPatternsFromCommand("")
+		expect(patterns).toEqual([])
+	})
+
+	it("should handle null/undefined", () => {
+		expect(extractPatternsFromCommand(null as any)).toEqual([])
+		expect(extractPatternsFromCommand(undefined as any)).toEqual([])
+	})
+
+	it("should handle scripts", () => {
+		const patterns = extractPatternsFromCommand("./script.sh --verbose")
+		expect(patterns).toEqual(["./script.sh"])
+	})
+
+	it("should handle paths with dots", () => {
+		const patterns = extractPatternsFromCommand("git add .")
+		expect(patterns).toEqual(["git", "git add"])
+	})
+
+	it("should handle paths with tilde", () => {
+		const patterns = extractPatternsFromCommand("cd ~/projects")
+		expect(patterns).toEqual(["cd"])
+	})
+
+	it("should handle colons in arguments", () => {
+		const patterns = extractPatternsFromCommand("docker run image:tag")
+		expect(patterns).toEqual(["docker", "docker run"])
+	})
+
+	it("should return sorted patterns", () => {
+		const patterns = extractPatternsFromCommand("npm run build && git push")
+		expect(patterns).toEqual(["git", "git push", "npm", "npm run", "npm run build"])
+	})
+
+	it("should handle complex command with multiple operators", () => {
+		const patterns = extractPatternsFromCommand("npm install && npm test | grep success || echo 'failed'")
+		expect(patterns).toContain("npm")
+		expect(patterns).toContain("npm install")
+		expect(patterns).toContain("npm test")
+		expect(patterns).toContain("grep")
+		expect(patterns).toContain("echo")
+	})
+
+	it("should handle malformed commands gracefully", () => {
+		const patterns = extractPatternsFromCommand("echo 'unclosed quote")
+		expect(patterns).toContain("echo")
+	})
+
+	it("should not treat package managers specially", () => {
+		const patterns = extractPatternsFromCommand("npm run build")
+		expect(patterns).toEqual(["npm", "npm run", "npm run build"])
+		// Now includes "npm run build" with 3-level extraction
+	})
+
+	it("should extract at most 3 levels", () => {
+		const patterns = extractPatternsFromCommand("git push origin main --force")
+		expect(patterns).toEqual(["git", "git push", "git push origin"])
+		// Should NOT include deeper levels beyond 3
+	})
+
+	it("should handle multi-level commands like gh pr", () => {
+		const patterns = extractPatternsFromCommand("gh pr checkout 123")
+		expect(patterns).toEqual(["
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== __tests__/command-validation-quote-protection.spec.ts =====
+// kilocode_change new file
+
+// npx vitest src/utils/__tests__/command-validation-quote-protection.spec.ts
+
+import {
+	protectNewlinesInQuotes,
+	NEWLINE_PLACEHOLDER,
+	CARRIAGE_RETURN_PLACEHOLDER,
+} from "../command-validation-quote-protection"
+
+describe("protectNewlinesInQuotes", () => {
+	const newlinePlaceholder = NEWLINE_PLACEHOLDER
+	const crPlaceholder = CARRIAGE_RETURN_PLACEHOLDER
+
+	describe("basic quote handling", () => {
+		it("protects newlines in double quotes", () => {
+			const input = 'echo "hello\nworld"'
+			const expected = `echo "hello${newlinePlaceholder}world"`
+			expect(protectNewlinesInQuotes(input, newlinePlaceholder, crPlaceholder)).toBe(expected)
+		})
+
+		it("protects newlines in single quotes", () => {
+			const input = "echo 'hello\nworld'"
+			const expected = `echo 'hello${newlinePlaceholder}world'`
+			expect(protectNewlinesInQuotes(input, newlinePlaceholder, crPlaceholder)).toBe(expected)
+		})
+
+		it("does not protect newlines outside quotes", () => {
+			const input = "echo hello\necho world"
+			const expected = "echo hello\necho world"
+			expect(protectNewlinesInQuotes(input, newlinePlaceholder, crPlaceholder)).toBe(expected)
+		})
+	})
+
+	describe("quote concatenation", () => {
+		it("handles quote concatenation where content between quotes is NOT quoted", () => {
+			// In bash: echo '"'A'"' prints "A" (A is not quoted)
+			const input = `echo '"'A\n'"'`
+			// The newline after A is NOT inside quotes, so it should NOT be protected
+			const expected = `echo '"'A\n'"'`
+			expect(protectNewlinesInQuotes(input, newlinePlaceholder, crPlaceholder)).toBe(expected)
+		})
+
+		it("handles alternating quotes correctly", () => {
+			// echo "hello"world"test" -> hello is quoted, world is not, test is quoted
+			const input = `echo "hello\n"world\n"test\n"`
+			const expected = `echo "hello${newlinePlaceholder}"world\n"test${newlinePlaceholder}"`
+			expect(protectNewlinesInQuotes(input, newlinePlaceholder, crPlaceholder)).toBe(expected)
+		})
+
+		it("handles single quote after double quote", () => {
+			const input = `echo "hello"'world\n'`
+			const expected = `echo "hello"'world${newlinePlaceholder}'`
+			expect(protectNewlinesInQuotes(input, newlinePlaceholder, crPlaceholder)).toBe(expected)
+		})
+
+		it("handles double quote after single quote", () => {
+			const input = `echo 'hello'"world\n"`
+			const expected = `echo 'hello'"world${newlinePlaceholder}"`
+			expect(protectNewlinesInQuotes(input, newlinePlaceholder, crPlaceholder)).toBe(expected)
+		})
+	})
+
+	describe("escaped quotes", () => {
+		it("handles escaped double quotes in double-quoted strings", () => {
+			const input = 'echo "hello\\"world\n"'
+			const expected = `echo "hello\\"world${newlinePlaceholder}"`
+			expect(protectNewlinesInQuotes(input, newlinePlaceholder, crPlaceholder)).toBe(expected)
+		})
+
+		it("does not treat backslash as escape in single quotes", () => {
+			// In single quotes, backslash is literal (except for \' in some shells)
+			const input = "echo 'hello\\'world\n'"
+			// The \\ is literal, the ' ends the quote, so world\n is outside quotes
+			const expected = "echo 'hello\\'world\n'"
+			expect(protectNewlinesInQuotes(input, newlinePlaceholder, crPlaceholder)).toBe(expected)
+		})
+	})
+
+	describe("edge cases", () => {
+		it("handles unclosed quotes", () => {
+			const input = 'echo "unclosed\n'
+			const expected = `echo "unclosed${newlinePlaceholder}`
+			expect(protectNewlinesInQuotes(input, newlinePlaceholder, crPlaceholder)).toBe(expected)
+		})
+
+		it("handles empty string", () => {
+			expect(protectNewlinesInQuotes("", newlinePlaceholder, crPlaceholder)).toBe("")
+		})
+
+		it("handles string with no quotes", () => {
+			const input = "echo hello\nworld"
+			expect(protectNewlinesInQuotes(input, newlinePlaceholder, crPlaceholder)).toBe(input)
+		})
+
+		it("handles multiple newlines in quotes", () => {
+			const input = 'echo "line1\nline2\nline3"'
+			const expected = `echo "line1${newlinePlaceholder}line2${newlinePlaceholder}line3"`
+			expect(protectNewlinesInQuot
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== __tests__/command-validation.spec.ts =====
+/* eslint-disable no-useless-escape */
+
+// npx vitest src/utils/__tests__/command-validation.spec.ts
+
+import {
+	parseCommand,
+	isAutoApprovedSingleCommand,
+	isAutoDeniedSingleCommand,
+	findLongestPrefixMatch,
+	getCommandDecision,
+	getSingleCommandDecision,
+	CommandValidator,
+	createCommandValidator,
+	containsDangerousSubstitution,
+} from "../command-validation"
+
+describe("Command Validation", () => {
+	describe("parseCommand", () => {
+		it("splits commands by chain operators", () => {
+			expect(parseCommand("npm test && npm run build")).toEqual(["npm test", "npm run build"])
+			expect(parseCommand("npm test || npm run build")).toEqual(["npm test", "npm run build"])
+			expect(parseCommand("npm test; npm run build")).toEqual(["npm test", "npm run build"])
+			expect(parseCommand("npm test | npm run build")).toEqual(["npm test", "npm run build"])
+			expect(parseCommand("npm test & npm run build")).toEqual(["npm test", "npm run build"])
+		})
+
+		it("handles & operator for background execution", () => {
+			expect(parseCommand("ls & whoami")).toEqual(["ls", "whoami"])
+			expect(parseCommand("ls & whoami & pwd")).toEqual(["ls", "whoami", "pwd"])
+			expect(parseCommand("ls && whoami & pwd || echo done")).toEqual(["ls", "whoami", "pwd", "echo done"])
+			expect(parseCommand("ls&whoami")).toEqual(["ls", "whoami"])
+		})
+
+		it("preserves quoted content", () => {
+			expect(parseCommand('npm test "param with | inside"')).toEqual(['npm test "param with | inside"'])
+			expect(parseCommand('echo "hello | world"')).toEqual(['echo "hello | world"'])
+			expect(parseCommand('npm test "param with && inside"')).toEqual(['npm test "param with && inside"'])
+		})
+
+		it("handles subshell patterns", () => {
+			expect(parseCommand("npm test $(echo test)")).toEqual(["npm test", "echo test"])
+			expect(parseCommand("npm test `echo test`")).toEqual(["npm test", "echo test"])
+			expect(parseCommand("diff <(sort f1) <(sort f2)")).toEqual(["diff", "sort f1", "sort f2"])
+		})
+
+		it("handles empty and whitespace input", () => {
+			expect(parseCommand("")).toEqual([])
+			expect(parseCommand("	")).toEqual([])
+			expect(parseCommand("\t")).toEqual([])
+		})
+
+		it("handles PowerShell specific patterns", () => {
+			expect(parseCommand('npm test 2>&1 | Select-String "Error"')).toEqual([
+				"npm test 2>&1",
+				'Select-String "Error"',
+			])
+			expect(
+				parseCommand('npm test | Select-String -NotMatch "node_modules" | Select-String "FAIL|Error"'),
+			).toEqual(["npm test", 'Select-String -NotMatch "node_modules"', 'Select-String "FAIL|Error"'])
+		})
+
+		describe("newline handling", () => {
+			it("splits commands by Unix newlines (\\n)", () => {
+				expect(parseCommand("echo hello\ngit status\nnpm install")).toEqual([
+					"echo hello",
+					"git status",
+					"npm install",
+				])
+			})
+
+			it("splits commands by Windows newlines (\\r\\n)", () => {
+				expect(parseCommand("echo hello\r\ngit status\r\nnpm install")).toEqual([
+					"echo hello",
+					"git status",
+					"npm install",
+				])
+			})
+
+			it("splits commands by old Mac newlines (\\r)", () => {
+				expect(parseCommand("echo hello\rgit status\rnpm install")).toEqual([
+					"echo hello",
+					"git status",
+					"npm install",
+				])
+			})
+
+			it("handles mixed line endings", () => {
+				expect(parseCommand("echo hello\ngit status\r\nnpm install\rls -la")).toEqual([
+					"echo hello",
+					"git status",
+					"npm install",
+					"ls -la",
+				])
+			})
+
+			it("ignores empty lines", () => {
+				expect(parseCommand("echo hello\n\n\ngit status\r\n\r\nnpm install")).toEqual([
+					"echo hello",
+					"git status",
+					"npm install",
+				])
+			})
+
+			it("handles newlines with chain operators", () => {
+				expect(parseCommand('npm install && npm test\ngit add .\ngit commit -m "test"')).toEqual([
+					"npm install",
+					"npm test",
+					"git add .",
+					'git commit -m "test"',
+				])
+			})
+
+			// kilocode_change start allowed newlines within quotes
+			it("preserves newlines within quotes", () => {
+				// Newlines inside q
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== __tests__/context-mentions.spec.ts =====
+import {
+	insertMention,
+	removeMention,
+	getContextMenuOptions,
+	shouldShowContextMenu,
+	ContextMenuOptionType,
+	ContextMenuQueryItem,
+	SearchResult,
+} from "@src/utils/context-mentions"
+
+describe("insertMention", () => {
+	it("should insert mention at cursor position when no @ symbol exists", () => {
+		const result = insertMention("Hello world", 5, "test")
+		expect(result.newValue).toBe("Hello@test  world")
+		expect(result.mentionIndex).toBe(5)
+	})
+
+	it("should replace text after last @ symbol", () => {
+		const result = insertMention("Hello @wor world", 8, "test")
+		expect(result.newValue).toBe("Hello @test  world")
+		expect(result.mentionIndex).toBe(6)
+	})
+
+	it("should handle empty text", () => {
+		const result = insertMention("", 0, "test")
+		expect(result.newValue).toBe("@test ")
+		expect(result.mentionIndex).toBe(0)
+	})
+	it("should replace partial mention after @", () => {
+		const result = insertMention("Mention @fi", 11, "/path/to/file.txt") // Cursor after 'i'
+		expect(result.newValue).toBe("Mention @/path/to/file.txt ") // Space added after mention
+		expect(result.mentionIndex).toBe(8)
+	})
+
+	it("should add a space after the inserted mention", () => {
+		const result = insertMention("Hello ", 6, "terminal") // Cursor at the end
+		expect(result.newValue).toBe("Hello @terminal ")
+		expect(result.mentionIndex).toBe(6)
+	})
+
+	it("should handle insertion at the beginning", () => {
+		const result = insertMention("world", 0, "problems")
+		expect(result.newValue).toBe("@problems world")
+		expect(result.mentionIndex).toBe(0)
+	})
+
+	it("should handle insertion at the end", () => {
+		const result = insertMention("Hello", 5, "problems")
+		expect(result.newValue).toBe("Hello@problems ")
+		expect(result.mentionIndex).toBe(5)
+	})
+
+	it("should handle slash command replacement", () => {
+		const result = insertMention("/mode some", 5, "code", true) // Simulating mode selection
+		expect(result.newValue).toBe("code") // Should replace the whole text
+		expect(result.mentionIndex).toBe(0)
+	})
+
+	// --- Tests for Escaped Spaces ---
+	it("should NOT escape spaces for non-path mentions", () => {
+		const result = insertMention("Hello @abc ", 10, "git commit with spaces") // Not a path
+		expect(result.newValue).toBe("Hello @git commit with spaces  ")
+	})
+
+	it("should escape spaces when inserting a file path mention with spaces", () => {
+		const filePath = "/path/to/file with spaces.txt"
+		const expectedEscapedPath = "/path/to/file\\ with\\ spaces.txt"
+		const result = insertMention("Mention @old", 11, filePath)
+
+		expect(result.newValue).toBe(`Mention @${expectedEscapedPath} `)
+		expect(result.mentionIndex).toBe(8)
+		// Verify escapeSpaces was effectively used (implicitly by checking output)
+		expect(result.newValue).toContain("\\ ")
+	})
+
+	it("should escape spaces when inserting a folder path mention with spaces", () => {
+		const folderPath = "/my documents/folder name/"
+		const expectedEscapedPath = "/my\\ documents/folder\\ name/"
+		const result = insertMention("Check @dir", 9, folderPath)
+
+		expect(result.newValue).toBe(`Check @${expectedEscapedPath} `)
+		expect(result.mentionIndex).toBe(6)
+		expect(result.newValue).toContain("\\ ")
+	})
+
+	it("should NOT escape spaces if the path value already contains escaped spaces", () => {
+		const alreadyEscapedPath = "/path/already\\ escaped.txt"
+		const result = insertMention("Insert @path", 11, alreadyEscapedPath)
+
+		// It should insert the already escaped path without double-escaping
+		expect(result.newValue).toBe(`Insert @${alreadyEscapedPath} `)
+		expect(result.mentionIndex).toBe(7)
+		// Check that it wasn't passed through escapeSpaces again (mock check)
+		// This relies on the mock implementation detail or careful checking
+		// A better check might be ensuring no double backslashes appear unexpectedly.
+		expect(result.newValue.includes("\\\\ ")).toBe(false)
+	})
+
+	it("should NOT escape spaces for paths without spaces", () => {
+		const simplePath = "/path/to/file.txt"
+		const result = insertMention("Simple
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== __tests__/format.spec.ts =====
+import { formatLargeNumber, formatDate, formatTimeAgo } from "../format"
+
+// Mock i18next
+vi.mock("i18next", () => ({
+	default: {
+		t: vi.fn((key: string, options?: any) => {
+			// Mock translations for testing
+			const translations: Record<string, string> = {
+				"common:number_format.billion_suffix": "b",
+				"common:number_format.million_suffix": "m",
+				"common:number_format.thousand_suffix": "k",
+				"common:time_ago.just_now": "just now",
+				"common:time_ago.seconds_ago": "{{count}} seconds ago",
+				"common:time_ago.minute_ago": "a minute ago",
+				"common:time_ago.minutes_ago": "{{count}} minutes ago",
+				"common:time_ago.hour_ago": "an hour ago",
+				"common:time_ago.hours_ago": "{{count}} hours ago",
+				"common:time_ago.day_ago": "a day ago",
+				"common:time_ago.days_ago": "{{count}} days ago",
+				"common:time_ago.week_ago": "a week ago",
+				"common:time_ago.weeks_ago": "{{count}} weeks ago",
+				"common:time_ago.month_ago": "a month ago",
+				"common:time_ago.months_ago": "{{count}} months ago",
+				"common:time_ago.year_ago": "a year ago",
+				"common:time_ago.years_ago": "{{count}} years ago",
+			}
+
+			let result = translations[key] || key
+			if (options?.count !== undefined) {
+				result = result.replace("{{count}}", options.count.toString())
+			}
+			return result
+		}),
+		language: "en",
+	},
+}))
+
+describe("formatLargeNumber", () => {
+	it("should format billions", () => {
+		expect(formatLargeNumber(1500000000)).toBe("1.5b")
+		expect(formatLargeNumber(2000000000)).toBe("2.0b")
+	})
+
+	it("should format millions", () => {
+		expect(formatLargeNumber(1500000)).toBe("1.5m")
+		expect(formatLargeNumber(2000000)).toBe("2.0m")
+	})
+
+	it("should format thousands", () => {
+		expect(formatLargeNumber(1500)).toBe("1.5k")
+		expect(formatLargeNumber(2000)).toBe("2.0k")
+	})
+
+	it("should return string for small numbers", () => {
+		expect(formatLargeNumber(999)).toBe("999")
+		expect(formatLargeNumber(100)).toBe("100")
+	})
+})
+
+describe("formatDate", () => {
+	it("should format date in English", () => {
+		const timestamp = new Date("2024-01-15T14:30:00").getTime()
+		const result = formatDate(timestamp)
+		// The exact format depends on the locale, but it should contain the date components
+		expect(result).toMatch(/january|jan/i)
+		expect(result).toMatch(/15/)
+	})
+})
+
+describe("formatTimeAgo", () => {
+	let originalDateNow: () => number
+
+	beforeEach(() => {
+		// Mock Date.now to have a consistent "now" time
+		originalDateNow = Date.now
+		Date.now = vi.fn(() => new Date("2024-01-15T12:00:00").getTime())
+	})
+
+	afterEach(() => {
+		// Restore original Date.now
+		Date.now = originalDateNow
+	})
+
+	it('should return "just now" for very recent times', () => {
+		const timestamp = new Date("2024-01-15T11:59:35").getTime() // 25 seconds ago
+		expect(formatTimeAgo(timestamp)).toBe("just now")
+	})
+
+	it("should format seconds ago", () => {
+		const timestamp = new Date("2024-01-15T11:59:15").getTime() // 45 seconds ago
+		expect(formatTimeAgo(timestamp)).toBe("45 seconds ago")
+	})
+
+	it("should format a minute ago", () => {
+		const timestamp = new Date("2024-01-15T11:59:00").getTime() // 1 minute ago
+		expect(formatTimeAgo(timestamp)).toBe("a minute ago")
+	})
+
+	it("should format minutes ago", () => {
+		const timestamp = new Date("2024-01-15T11:45:00").getTime() // 15 minutes ago
+		expect(formatTimeAgo(timestamp)).toBe("15 minutes ago")
+	})
+
+	it("should format an hour ago", () => {
+		const timestamp = new Date("2024-01-15T11:00:00").getTime() // 1 hour ago
+		expect(formatTimeAgo(timestamp)).toBe("an hour ago")
+	})
+
+	it("should format hours ago", () => {
+		const timestamp = new Date("2024-01-15T09:00:00").getTime() // 3 hours ago
+		expect(formatTimeAgo(timestamp)).toBe("3 hours ago")
+	})
+
+	it("should format a day ago", () => {
+		const timestamp = new Date("2024-01-14T12:00:00").getTime() // 1 day ago
+		expect(formatTimeAgo(timestamp)).toBe("a day ago")
+	})
+
+	it("should format days ago", () => {
+		const timestamp = new Date("2024-01-12T12:00:00").getTim
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== __tests__/model-utils.spec.ts =====
+// npx vitest src/utils/__tests__/model-utils.spec.ts
+
+import { calculateTokenDistribution } from "../model-utils"
+
+describe("calculateTokenDistribution", () => {
+	it("should calculate token distribution correctly", () => {
+		const contextWindow = 10000
+		const contextTokens = 5000
+		const maxTokens = 2000
+
+		const result = calculateTokenDistribution(contextWindow, contextTokens, maxTokens)
+
+		expect(result.reservedForOutput).toBe(maxTokens)
+		expect(result.availableSize).toBe(3000) // 10000 - 5000 - 2000
+
+		// Percentages should sum to 100%
+		expect(Math.round(result.currentPercent + result.reservedPercent + result.availablePercent)).toBe(100)
+	})
+
+	it("should default to 8192 when maxTokens not provided", () => {
+		const contextWindow = 20000
+		const contextTokens = 5000
+
+		const result = calculateTokenDistribution(contextWindow, contextTokens)
+
+		expect(result.reservedForOutput).toBe(8192)
+		expect(result.availableSize).toBe(6808) // 20000 - 5000 - 8192
+	})
+
+	it("should handle negative or zero inputs by using positive fallbacks", () => {
+		const result = calculateTokenDistribution(-1000, -500)
+
+		expect(result.currentPercent).toBe(0)
+		expect(result.reservedPercent).toBe(100) // 8192 / 8192 = 100%
+		expect(result.availablePercent).toBe(0)
+		expect(result.reservedForOutput).toBe(8192) // Uses ANTHROPIC_DEFAULT_MAX_TOKENS
+		expect(result.availableSize).toBe(0) // max(0, 0 - 0 - 8192) = 0
+	})
+
+	it("should handle zero context window without division by zero errors", () => {
+		const result = calculateTokenDistribution(0, 0)
+
+		expect(result.currentPercent).toBe(0)
+		expect(result.reservedPercent).toBe(100) // When contextWindow is 0, reserved gets 100%
+		expect(result.availablePercent).toBe(0)
+		expect(result.reservedForOutput).toBe(8192) // Uses ANTHROPIC_DEFAULT_MAX_TOKENS when no maxTokens provided
+		expect(result.availableSize).toBe(0)
+	})
+})
+
+===== __tests__/patchBridge.spec.ts =====
+import { describe, test, expect, vi, beforeEach } from "vitest"
+import { vscode } from "../vscode"
+import {
+	reportEditError,
+	reportPatchResult,
+	createErrorPayload,
+	createPatchResultPayload,
+	PatchOutcome,
+	PatchClassification,
+	type PatchResult,
+} from "../patchBridge"
+
+// Mock vscode module
+vi.mock("../vscode")
+
+describe("patchBridge", () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+		// Reset mock implementation to default (no error)
+		vi.mocked(vscode).postMessage.mockImplementation(() => {})
+	})
+
+	describe("reportEditError", () => {
+		test("should post error message with correct type and payload", () => {
+			const errorPayload = { message: "Test error", code: 500 }
+
+			reportEditError(errorPayload)
+
+			expect(vi.mocked(vscode).postMessage).toHaveBeenCalledWith({
+				type: "supervisor:error",
+				payload: errorPayload,
+			})
+		})
+
+		test("should handle postMessage errors", () => {
+			const errorMessage = "PostMessage failed"
+			vi.mocked(vscode).postMessage.mockImplementation(() => {
+				throw new Error(errorMessage)
+			})
+
+			expect(() => reportEditError({ message: "Test" })).toThrow(`Failed to report edit error: ${errorMessage}`)
+		})
+	})
+
+	describe("reportPatchResult", () => {
+		test("should post patch result with correct type and payload", () => {
+			const result: PatchResult = {
+				opId: "test-op-123",
+				outcome: PatchOutcome.SUCCESS,
+				classification: PatchClassification.BUGFIX,
+				executionTimeMs: 150,
+			}
+
+			reportPatchResult(result)
+
+			expect(vi.mocked(vscode).postMessage).toHaveBeenCalledWith({
+				type: "supervisor:result",
+				payload: result,
+			})
+		})
+
+		test("should handle postMessage errors", () => {
+			const errorMessage = "PostMessage failed"
+			vi.mocked(vscode).postMessage.mockImplementation(() => {
+				throw new Error(errorMessage)
+			})
+
+			const result: PatchResult = {
+				opId: "test-op-123",
+				outcome: PatchOutcome.FAILURE,
+				classification: PatchClassification.OTHER,
+			}
+
+			expect(() => reportPatchResult(result)).toThrow(`Failed to report patch result: ${errorMessage}`)
+		})
+	})
+
+	describe("createErrorPayload", () => {
+		test("should create error payload with message, stack, and timestamp", () => {
+			const error = new Error("Test error message")
+			error.stack = "Error: Test error message\n    at test.js:1:1"
+
+			const payload = createErrorPayload(error)
+
+			expect(payload).toEqual({
+				message: "Test error message",
+				stack: "Error: Test error message\n    at test.js:1:1",
+				context: {},
+				timestamp: expect.any(String),
+			})
+
+			// Verify timestamp is a valid ISO string
+			expect(new Date(payload.timestamp)).toBeInstanceOf(Date)
+		})
+
+		test("should include context when provided", () => {
+			const error = new Error("Test error")
+			const context = { operation: "test", filePath: "/test/file.ts" }
+
+			const payload = createErrorPayload(error, context)
+
+			expect(payload.context).toEqual(context)
+		})
+
+		test("should handle errors without stack trace", () => {
+			const error = new Error("Test error")
+			delete error.stack
+
+			const payload = createErrorPayload(error)
+
+			expect(payload.message).toBe("Test error")
+			expect(payload.stack).toBeUndefined()
+		})
+	})
+
+	describe("createPatchResultPayload", () => {
+		test("should create patch result payload with result data and timestamp", () => {
+			const result: PatchResult = {
+				opId: "test-op-456",
+				outcome: PatchOutcome.SUCCESS,
+				classification: PatchClassification.FEATURE,
+				modifiedLines: [10, 11, 12],
+				executionTimeMs: 200,
+			}
+
+			const payload = createPatchResultPayload(result)
+
+			expect(payload).toEqual({
+				...result,
+				context: {},
+				timestamp: expect.any(String),
+			})
+
+			// Verify timestamp is a valid ISO string
+			expect(new Date(payload.timestamp)).toBeInstanceOf(Date)
+		})
+
+		test("should include context when provided", () => {
+			const result: PatchResult = {
+				opId: "test-op-789",
+				outcome: PatchOutcome.PARTIAL,
+				classification: PatchClassification.REFACTOR,
+			}
+			const contex
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== __tests__/path-mentions.test.ts =====
+import { escapeSpaces, convertToMentionPath } from "../path-mentions"
+
+describe("Path Mentions Utilities", () => {
+	describe("escapeSpaces", () => {
+		it("should replace spaces with escaped spaces", () => {
+			expect(escapeSpaces("file with spaces.txt")).toBe("file\\ with\\ spaces.txt")
+			expect(escapeSpaces("/path/to/another file/")).toBe("/path/to/another\\ file/")
+			expect(escapeSpaces("single space")).toBe("single\\ space")
+		})
+
+		it("should handle paths without spaces", () => {
+			expect(escapeSpaces("file_without_spaces.txt")).toBe("file_without_spaces.txt")
+			expect(escapeSpaces("/path/to/normal/file")).toBe("/path/to/normal/file")
+		})
+
+		it("should handle multiple spaces", () => {
+			expect(escapeSpaces("a b c d.txt")).toBe("a\\ b\\ c\\ d.txt")
+		})
+
+		it("should handle leading/trailing spaces", () => {
+			expect(escapeSpaces(" leading space")).toBe("\\ leading\\ space")
+			expect(escapeSpaces("trailing space ")).toBe("trailing\\ space\\ ")
+		})
+
+		it("should handle empty string", () => {
+			expect(escapeSpaces("")).toBe("")
+		})
+
+		it("should not affect already escaped spaces", () => {
+			// This function assumes input spaces are not already escaped
+			// The function will re-escape the backslashes, resulting in double-escaped spaces
+			expect(escapeSpaces("file\\ with\\ spaces.txt")).toBe("file\\\\ with\\\\ spaces.txt")
+		})
+
+		it("should not escape other characters", () => {
+			expect(escapeSpaces("path/with/slashes")).toBe("path/with/slashes")
+			expect(escapeSpaces("file-with-hyphens.txt")).toBe("file-with-hyphens.txt")
+		})
+	})
+
+	describe("convertToMentionPath", () => {
+		const MOCK_CWD_POSIX = "/Users/test/project"
+		const MOCK_CWD_WIN = "C:\\Users\\test\\project"
+
+		it("should convert absolute posix path within cwd to relative mention path and escape spaces", () => {
+			const absPath = "/Users/test/project/src/file with spaces.ts"
+			expect(convertToMentionPath(absPath, MOCK_CWD_POSIX)).toBe("@/src/file\\ with\\ spaces.ts")
+		})
+
+		it("should convert absolute windows path within cwd to relative mention path and escape spaces", () => {
+			const absPath = "C:\\Users\\test\\project\\src\\file with spaces.ts"
+			expect(convertToMentionPath(absPath, MOCK_CWD_WIN)).toBe("@/src/file\\ with\\ spaces.ts")
+		})
+
+		it("should handle paths already relative to cwd (though input is usually absolute)", () => {
+			const relPath = "src/another file.js" // Assuming this might be passed somehow
+			// It won't match startsWith(cwd), so it should return the original path (but normalized)
+			expect(convertToMentionPath(relPath, MOCK_CWD_POSIX)).toBe("src/another file.js")
+		})
+
+		it("should handle paths outside cwd by returning the original path (normalized)", () => {
+			const absPath = "/Users/other/file.txt"
+			expect(convertToMentionPath(absPath, MOCK_CWD_POSIX)).toBe("/Users/other/file.txt")
+			// Since we can't control the implementation of path normalization in this test,
+			// let's accept either form of path separators (/ or \) for the Windows path test
+			const winPath = "D:\\another\\folder\\file.txt"
+			const result = convertToMentionPath(winPath, MOCK_CWD_WIN)
+			// Check that the path was returned without being converted to a mention
+			expect(result.startsWith("@")).toBe(false)
+			// Check the path contains the expected components regardless of separator
+			expect(result.toLowerCase()).toContain("d:")
+			expect(result.toLowerCase()).toContain("another")
+			expect(result.toLowerCase()).toContain("folder")
+			expect(result.toLowerCase()).toContain("file.txt")
+		})
+
+		it("should handle paths with no spaces correctly", () => {
+			const absPath = "/Users/test/project/src/normal.ts"
+			expect(convertToMentionPath(absPath, MOCK_CWD_POSIX)).toBe("@/src/normal.ts")
+		})
+
+		it("should add leading slash if missing after cwd removal", () => {
+			const absPath = "/Users/test/projectfile.txt" // Edge case: file directly in project root
+			const cwd = "/Users/test/project"
+			expect(convertToMentionPath(absPath, cwd)).toBe("@/f
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== __tests__/sampling.spec.ts =====
+import { createSampledFunction } from "../sampling"
+import { vi } from "vitest"
+
+describe("createSampledFunction", () => {
+	beforeEach(() => {
+		vi.restoreAllMocks()
+	})
+
+	it("should call the wrapped function when random value is less than sample rate", () => {
+		vi.spyOn(Math, "random").mockReturnValue(0.005) // 0.5%
+		const mockFn = vi.fn()
+		const sampledFn = createSampledFunction(mockFn, 0.01) // 1%
+
+		sampledFn("test", 123)
+
+		expect(mockFn).toHaveBeenCalledWith("test", 123)
+	})
+
+	it("should not call the wrapped function when random value is greater than sample rate", () => {
+		vi.spyOn(Math, "random").mockReturnValue(0.015) // 1.5%
+		const mockFn = vi.fn()
+		const sampledFn = createSampledFunction(mockFn, 0.01) // 1%
+
+		sampledFn("test", 123)
+
+		expect(mockFn).not.toHaveBeenCalled()
+	})
+})
+
+===== __tests__/sourceMapUtils.spec.ts =====
+import { parseStackTrace, applySourceMapsToStack, enhanceErrorWithSourceMaps } from "../sourceMapUtils"
+
+// Mock console.debug to avoid cluttering test output
+beforeEach(() => {
+	vi.spyOn(console, "debug").mockImplementation(() => {})
+})
+
+describe("sourceMapUtils", () => {
+	describe("parseStackTrace", () => {
+		// Note: parseStackTrace is now a compatibility function
+		test("should correctly parse a Chrome-style stack trace", async () => {
+			const stackTrace = `Error: Test error
+    at Function.execute (webpack:///./src/components/App.tsx:123:45)
+    at Object.next (webpack:///./node_modules/react/index.js:76:21)
+    at eval (webpack:///./src/utils/helpers.ts:89:10)`
+
+			const frames = await parseStackTrace(stackTrace)
+
+			// Verify it still returns an array of frame objects
+			expect(frames).toBeInstanceOf(Array)
+			expect(frames.length).toBeGreaterThan(0)
+
+			// Check that the first frame has the expected properties
+			const firstFrame = frames[0]
+			expect(firstFrame).toHaveProperty("functionName")
+			expect(firstFrame).toHaveProperty("fileName")
+			expect(firstFrame).toHaveProperty("lineNumber")
+			expect(firstFrame).toHaveProperty("columnNumber")
+			expect(firstFrame).toHaveProperty("source")
+
+			// Verify the first frame has the correct values
+			expect(firstFrame.fileName).toBe("webpack:///./src/components/App.tsx")
+			expect(firstFrame.lineNumber).toBe(123)
+			expect(firstFrame.columnNumber).toBe(45)
+		})
+
+		test("should return empty array for empty stack", async () => {
+			expect(await parseStackTrace("")).toEqual([])
+			expect(await parseStackTrace(undefined as unknown as string)).toEqual([])
+		})
+	})
+
+	describe("applySourceMapsToStack", () => {
+		test("should return original stack when source maps cannot be applied", async () => {
+			const stackTrace = `Error: Test error
+    at Function.execute (webpack:///./src/components/App.tsx:123:45)`
+
+			const result = await applySourceMapsToStack(stackTrace)
+
+			// For now, we expect it to return the original stack
+			// since we haven't implemented actual source map application
+			expect(result).toBe(stackTrace)
+		})
+
+		test("should handle empty stack", async () => {
+			const emptyStack = ""
+			const result = await applySourceMapsToStack(emptyStack)
+			expect(result).toBe(emptyStack)
+		})
+	})
+
+	describe("enhanceErrorWithSourceMaps", () => {
+		test("should add sourceMappedStack property to error", async () => {
+			const error = new Error("Test error")
+			error.stack = `Error: Test error
+    at Function.execute (webpack:///./src/components/App.tsx:123:45)`
+
+			// Mock the applySourceMapsToStack function
+			vi.spyOn(global.console, "error").mockImplementation(() => {})
+
+			const enhancedError = await enhanceErrorWithSourceMaps(error)
+
+			expect(enhancedError).toBe(error) // Should return the same error object
+			expect("sourceMappedStack" in enhancedError).toBe(true)
+		})
+
+		test("should handle errors without stack", async () => {
+			const error = new Error("Test error")
+			error.stack = undefined
+
+			const enhancedError = await enhanceErrorWithSourceMaps(error)
+
+			expect(enhancedError).toBe(error)
+			expect("sourceMappedStack" in enhancedError).toBe(false)
+		})
+	})
+})
+
+===== __tests__/validate.test.ts =====
+import type { ProviderSettings, OrganizationAllowList } from "@roo-code/types"
+
+import { RouterModels } from "@roo/api"
+
+import { getModelValidationError, validateApiConfigurationExcludingModelErrors } from "../validate"
+
+describe("Model Validation Functions", () => {
+	const mockRouterModels: RouterModels = {
+		openrouter: {
+			"valid-model": {
+				maxTokens: 8192,
+				contextWindow: 200000,
+				supportsImages: true,
+				supportsPromptCache: false,
+				inputPrice: 3.0,
+				outputPrice: 15.0,
+			},
+			"another-valid-model": {
+				maxTokens: 4096,
+				contextWindow: 100000,
+				supportsImages: false,
+				supportsPromptCache: false,
+				inputPrice: 1.0,
+				outputPrice: 5.0,
+			},
+		},
+		"kilocode-openrouter": {
+			"valid-model": {
+				maxTokens: 8192,
+				contextWindow: 200000,
+				supportsImages: true,
+				supportsPromptCache: false,
+				inputPrice: 3.0,
+				outputPrice: 15.0,
+			},
+			"another-valid-model": {
+				maxTokens: 4096,
+				contextWindow: 100000,
+				supportsImages: false,
+				supportsPromptCache: false,
+				inputPrice: 1.0,
+				outputPrice: 5.0,
+			},
+		},
+		glama: {
+			"valid-model": {
+				maxTokens: 8192,
+				contextWindow: 200000,
+				supportsImages: true,
+				supportsPromptCache: false,
+				inputPrice: 3.0,
+				outputPrice: 15.0,
+			},
+		},
+		requesty: {},
+		unbound: {},
+		litellm: {},
+		ollama: {},
+		lmstudio: {},
+		deepinfra: {},
+		"io-intelligence": {},
+		"vercel-ai-gateway": {},
+		huggingface: {},
+		// kilocode_change start
+		ovhcloud: {},
+		chutes: {},
+		gemini: {},
+		inception: {},
+		// kilocode_change end
+	}
+
+	const allowAllOrganization: OrganizationAllowList = {
+		allowAll: true,
+		providers: {},
+	}
+
+	const restrictiveOrganization: OrganizationAllowList = {
+		allowAll: false,
+		providers: {
+			openrouter: {
+				allowAll: false,
+				models: ["valid-model"],
+			},
+		},
+	}
+
+	describe("getModelValidationError", () => {
+		it("returns undefined for valid OpenRouter model", () => {
+			const config: ProviderSettings = {
+				apiProvider: "openrouter",
+				openRouterModelId: "valid-model",
+			}
+
+			const result = getModelValidationError(config, mockRouterModels, allowAllOrganization)
+			expect(result).toBeUndefined()
+		})
+
+		it("returns error for invalid OpenRouter model", () => {
+			const config: ProviderSettings = {
+				apiProvider: "openrouter",
+				openRouterModelId: "invalid-model",
+			}
+
+			const result = getModelValidationError(config, mockRouterModels, allowAllOrganization)
+			expect(result).toBe("validation.modelAvailability")
+		})
+
+		it("returns error for model not allowed by organization", () => {
+			const config: ProviderSettings = {
+				apiProvider: "openrouter",
+				openRouterModelId: "another-valid-model",
+			}
+
+			const result = getModelValidationError(config, mockRouterModels, restrictiveOrganization)
+			expect(result).toContain("model")
+		})
+
+		it("returns undefined for valid Glama model", () => {
+			const config: ProviderSettings = {
+				apiProvider: "glama",
+				glamaModelId: "valid-model",
+			}
+
+			const result = getModelValidationError(config, mockRouterModels, allowAllOrganization)
+			expect(result).toBeUndefined()
+		})
+
+		it("returns error for invalid Glama model", () => {
+			const config: ProviderSettings = {
+				apiProvider: "glama",
+				glamaModelId: "invalid-model",
+			}
+
+			const result = getModelValidationError(config, mockRouterModels, allowAllOrganization)
+			expect(result).toBeUndefined()
+		})
+
+		it("returns undefined for OpenAI models when no router models provided", () => {
+			const config: ProviderSettings = {
+				apiProvider: "openai",
+				openAiModelId: "gpt-4",
+			}
+
+			const result = getModelValidationError(config, undefined, allowAllOrganization)
+			expect(result).toBeUndefined()
+		})
+
+		it("handles empty model IDs gracefully", () => {
+			const config: ProviderSettings = {
+				apiProvider: "openrouter",
+				openRouterModelId: "",
+			}
+
+			const result = getModelValidationError(config, mockRouterModels, allowAllOrganization)
+			expect(result).toBe("validation.modelId")
+		})
+…[truncated]
+# note: truncated to stay within per-file budget
+

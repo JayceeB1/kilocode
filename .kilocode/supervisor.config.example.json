@@ -1,0 +1,20 @@
+{
+  "bind": "127.0.0.1",
+  "port": 9611,
+  "provider": "ollama",
+  "model": "llama3.1:8b-instruct-q4",
+  "max_tokens": 768,
+  "temperature": 0.2,
+  "providerBaseUrl": "http://127.0.0.1:8080",
+  "providerTimeoutMs": 15000,
+  "security": {
+    "enforceLocalhost": true,
+    "allowLan": false,
+    "allowedCidrs": ["10.0.4.0/24"],
+    "portMin": 9600,
+    "portMax": 9699,
+    "maxBodySizeMB": 10,
+    "requireAuth": false
+  },
+  "logging": { "level": "info", "http": false }
+}

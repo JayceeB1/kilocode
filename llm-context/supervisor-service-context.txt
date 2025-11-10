@@ -1,4 +1,4 @@
-# Context digest for packages/supervisor-service# Files considered: 30# Max chars per file: 4000# Max chars per digest: 160000===== eslint.config.js =====
+# Context digest for packages/supervisor-service# Files considered: 34# Max chars per file: 4000# Max chars per digest: 160000===== eslint.config.js =====
 import { config } from "@roo-code/config-eslint/base"
 
 export default [
@@ -134,6 +134,23 @@ vi.mock("./config.js", () => ({
 	resetConfig: vi.fn(),
 }))
 
+vi.mock("./llm/index.js", () => ({
+	analyzeWithLLM: vi.fn().mockResolvedValue({
+		issues: [
+			{
+				type: "syntax",
+				severity: "warning",
+				message: "Potential syntax issue detected",
+				line: 1,
+				suggestion: "Check for missing semicolons or brackets",
+				confidence: 0.8,
+			},
+		],
+		suggestions: ["Consider adding type annotations", "Review error handling patterns"],
+		fixedCode: 'console.log("hello world");',
+	}),
+}))
+
 // Mock Express Response
 const mockResponse = () => {
 	const res: Partial<Response> = {}
@@ -196,7 +213,6 @@ describe("analyze", () => {
 				metadata: expect.objectContaining({
 					model: expect.any(String),
 					provider: expect.any(String),
-					tokensUsed: expect.any(Number),
 					processingTime: expect.any(Number),
 				}),
 			}),
@@ -254,26 +270,14 @@ describe("healthCheck", () => {
 
 	test("should return unhealthy status on error", async () => {
 		const { getConfig } = await import("./config.js")
-		vi.mocked(getConfig).mockImplementationOnce(() => {
-			throw new Error("Config error")
-		})
-
-		const req = {} as Request
-		const res = mockResponse()
-
-		await healthCheck(req, res)
-
-		expect(res.status).toHaveBeenCalledWith(500)
-		expect(res.json).toHaveBeenCalledWith({
-			status: "unhealthy",
-			error: "Config error",
-		})
-	})
-})
+		vi.mocked(getConfig).mockImplementatio
+…[truncated]
+# note: truncated to stay within per-file budget
 
 ===== src/analyze.ts =====
 import { Request, Response } from "express"
 import { getConfig } from "./config.js"
+import { analyzeWithLLM } from "./llm/index.js"
 
 export interface AnalyzeRequest {
 	code: string
@@ -320,32 +324,25 @@ export async function analyzeCode(req: Request, res: Response): Promise<void> {
 
 		const config = getConfig()
 
-		// For now, return a mock analysis
-		// In a real implementation, this would call the LLM provider
-		const mockAnalysis: AnalyzeResponse = {
-			analysis: {
-				issues: [
-					{
-						type: "syntax",
-						severity: "warning",
-						message: "Potential syntax issue detected",
-						line: 1,
-						suggestion: "Check for missing semicolons or brackets",
-						confidence: 0.8,
-					},
-				],
-				suggestions: ["Consider adding type annotations", "Review error handling patterns"],
-				fixedCode: code, // Would contain actual fixes in real implementation
-			},
+		// Extract optional parameters from request body
+		const language = typeof rawBody.language === "string" ? rawBody.language : undefined
+		const filePath = typeof rawBody.filePath === "string" ? rawBody.filePath : undefined
+		const context = typeof rawBody.context === "string" ? rawBody.context : undefined
+
+		// Use LLM for analysis
+		const llmAnalysis = await analyzeWithLLM(code, language, filePath, context)
+
+		const analysisResponse: AnalyzeResponse = {
+			analysis: llmAnalysis,
 			metadata: {
 				model: config.model,
 				provider: config.provider,
-				tokensUsed: 150,
+				tokensUsed: undefined, // Ollama doesn't provide token count by default
 				processingTime: Date.now() - startTime,
 			},
 		}
 
-		res.json(mockAnalysis)
+		res.json(analysisResponse)
 	} catch (error) {
 		console.error("Analysis error:", error)
 		res.status(500).json({
@@ -401,7 +398,7 @@ describe("Config", () => {
 		const config = loadConfig("/non/existent/path.json")
 
 		expect(config.bind).toBe("127.0.0.1")
-		expect(config.port).toBe(43110)
+		expect(config.port).toBe(9611)
 		expect(config.provider).toBe("ollama")
 		expect(config.model).toBe("llama3.1:8b-instruct-q4")
 		expect(config.max_tokens).toBe(768)
@@ -461,7 +458,7 @@ describe("Config", () => {
 
 		// Should fall back to defaults
 		expect(config.bind).toBe("127.0.0.1")
-		expect(config.port).toBe(43110)
+		expect(config.port).toBe(9611)
 	})
 
 	test("should validate config schema", () => {
@@ -476,7 +473,7 @@ describe("Config", () => {
 		const config = loadConfig(testConfigPath)
 
 		// Should fall back to defaults for invalid values
-		expect(config.port).toBe(43110)
+		expect(config.port).toBe(9611)
 		expect(config.temperature).toBe(0.2)
 		expect(config.provider).toBe("ollama")
 	})
@@ -489,7 +486,7 @@ import { join } from "path"
 
 const SupervisorConfigSchema = z.object({
 	bind: z.string().default("127.0.0.1"),
-	port: z.number().int().positive().default(43110),
+	port: z.number().int().positive().default(9611),
 	provider: z.enum(["ollama", "lmstudio", "openai"]).default("ollama"),
 	model: z.string().default("llama3.1:8b-instruct-q4"),
 	max_tokens: z.number().int().positive().default(768),
@@ -546,6 +543,7 @@ import cors from "cors"
 import helmet from "helmet"
 import { loadConfig } from "./config.js"
 import { analyzeCode, healthCheck } from "./analyze.js"
+import { handlePatchRequest, validatePatchMiddleware } from "./routes/patch.js"
 
 async function startServer(): Promise<void> {
 	try {
@@ -569,8 +567,8 @@ async function startServer(): Promise<void> {
 				origin: [
 					"http://localhost:3000",
 					"http://127.0.0.1:3000",
-					"http://localhost:43110",
-					"http://127.0.0.1:43110",
+					"http://localhost:9611",
+					"http://127.0.0.1:9611",
 				],
 				credentials: true,
 			}),
@@ -592,12 +590,14 @@ async function startServer(): Promise<void> {
 
 		app.post("/v1/analyze", analyzeCode)
 
+		app.post("/v1/patch", validatePatchMiddleware, handlePatchRequest)
+
 		// 404 handler
 		app.use("*", (req, res) => {
 			res.status(404).json({
 				error: "Not Found",
 				message: `Route ${req.method} ${req.originalUrl} not found`,
-				availableRoutes: ["GET /health", "POST /v1/analyze"],
+				availableRoutes: ["GET /health", "POST /v1/analyze", "POST /v1/patch"],
 			})
 		})
 
@@ -615,6 +615,7 @@ async function startServer(): Promise<void> {
 			console.log(`🚀 KiloCode Supervisor Service started on http://${config.bind}:${config.port}`)
 			console.log(`📊 Health check: http://${config.bind}:${config.port}/health`)
 			console.log(`🔍 Analysis endpoint: http://${config.bind}:${config.port}/v1/analyze`)
+			console.log(`🔧 Patch endpoint: http://${config.bind}:${config.port}/v1/patch`)
 			console.log(`🧠 Using ${config.provider} with model: ${config.model}`)
 			console.log(`🔒 Security: Localhost only access`)
 		})
@@ -1568,6 +1569,216 @@ export interface TaskResult {
 	completedAt?: Date
 }
 
+===== src/llm/index.ts =====
+/**
+ * LLM facade module for code analysis
+ * Provides a unified interface for different LLM providers
+ */
+
+export { analyzeWithOllama, type LlmAnalysis } from "./ollamaClient.js"
+
+import { getConfig } from "../config.js"
+import { analyzeWithOllama, type LlmAnalysis } from "./ollamaClient.js"
+
+/**
+ * Analyzes code using the configured LLM provider
+ * @param code - The code to analyze
+ * @param language - Optional programming language hint
+ * @param filePath - Optional file path for context
+ * @param context - Optional additional context
+ * @returns Promise resolving to LLM analysis
+ */
+export async function analyzeWithLLM(
+	code: string,
+	language?: string,
+	filePath?: string,
+	context?: string
+): Promise<LlmAnalysis> {
+	const config = getConfig()
+	
+	switch (config.provider) {
+		case "ollama":
+			return analyzeWithOllama(code, language, filePath, context)
+		
+		case "lmstudio":
+			// For now, fall back to Ollama for LM Studio
+			// TODO: Implement LM Studio specific client
+			console.warn("LM Studio provider not yet implemented, falling back to Ollama")
+			return analyzeWithOllama(code, language, filePath, context)
+		
+		case "openai":
+			// For now, fall back to Ollama for OpenAI
+			// TODO: Implement OpenAI specific client
+			console.warn("OpenAI provider not yet implemented, falling back to Ollama")
+			return analyzeWithOllama(code, language, filePath, context)
+		
+		default:
+			throw new Error(`Unsupported LLM provider: ${config.provider}`)
+	}
+}
+===== src/llm/ollamaClient.ts =====
+import { getConfig } from "../config.js"
+import type { AnalyzeResponse } from "../analyze.js"
+
+/**
+ * LLM analysis interface
+ */
+export interface LlmAnalysis {
+	issues: Array<{
+		type: string
+		severity: "error" | "warning" | "info"
+		message: string
+		line?: number
+		column?: number
+		suggestion?: string
+		confidence?: number
+	}>
+	suggestions: string[]
+	fixedCode?: string
+}
+
+/**
+ * Analyzes code using Ollama locally
+ * @param code - The code to analyze
+ * @param language - Optional programming language hint
+ * @param filePath - Optional file path for context
+ * @param context - Optional additional context
+ * @returns Promise resolving to LLM analysis
+ */
+export async function analyzeWithOllama(
+	code: string,
+	language?: string,
+	filePath?: string,
+	context?: string
+): Promise<LlmAnalysis> {
+	const config = getConfig()
+	
+	try {
+		// Import ollama dynamically to avoid issues when package is not available
+		const { default: ollama } = await import("ollama")
+		
+		// Construct the prompt
+		const prompt = buildAnalysisPrompt(code, language, filePath, context)
+		
+		// Call Ollama API
+		const response = await ollama.generate({
+			model: config.model,
+			prompt,
+			options: {
+				temperature: config.temperature,
+				num_predict: config.max_tokens,
+			},
+		})
+		
+		// Extract JSON from the response
+		const analysis = extractJsonFromResponse(response.response)
+		
+		// Validate and return the analysis
+		return validateAnalysis(analysis)
+	} catch (error) {
+		console.warn("Ollama analysis failed, using fallback:", error)
+		return getFallbackAnalysis(code)
+	}
+}
+
+/**
+ * Builds a comprehensive analysis prompt for the LLM
+ */
+function buildAnalysisPrompt(
+	code: string,
+	language?: string,
+	filePath?: string,
+	context?: string
+): string {
+	const languageHint = language ? `The code is written in ${language}.` : ""
+	const filePathHint = filePath ? `File path: ${filePath}.` : ""
+	const contextHint = context ? `Additional context: ${context}.` : ""
+	
+	return `You are a code analysis expert. Analyze the following code and provide a structured JSON response.
+
+${languageHint}
+${filePathHint}
+${contextHint}
+
+Code to analyze:
+\`\`\`
+${code}
+\`\`\`
+
+Please analyze the code and return a JSON object with the following structure:
+{
+  "issues": [
+    {
+      "type": "string",
+      "severity": "error" | "warning" | "info",
+      "message": "string",
+      "line": number,
+      "column": number,
+      "suggestion": "string",
+      "confidence": number (0-1)
+    }
+  ],
+  "suggestions": ["string"],
+  "fixedCode": "string (optional, only if you can provide a clear fix)"
+}
+
+Focus on:
+1. Syntax errors and potential bugs
+2. Code quality issues
+3. Security vulnerabilities
+4. Performance concerns
+5. Best practices violations
+
+Return only the JSON object, no additional text.`
+}
+
+/**
+ * Extracts JSON from LLM response with fallback parsing
+ */
+function extractJsonFromResponse(response: string): any {
+	try {
+		// Try to parse the entire response as JSON
+		return JSON.parse(response)
+	} catch {
+		try {
+			// Try to extract JSON from markdown code blocks
+			const jsonMatch = response.match(/```(?:json)?\s*([\s\S]*?)\s*```/)
+			if (jsonMatch) {
+				return JSON.parse(jsonMatch[1])
+			}
+			
+			// Try to find JSON object in the response
+			const objectMatch = response.match(/\{[\s\S]*\}/)
+			if (objectMatch) {
+				return JSON.parse(objectMatch[0])
+			}
+		} catch (error) {
+			console.warn("Failed to extract JSON from response:", error)
+		}
+		
+		// If all parsing attempts fail, return null
+		return null
+	}
+}
+
+/**
+ * Validates and normalizes the analysis object
+ */
+function validateAnalysis(analysis: any): LlmAnalysis {
+	if (!analysis || typeof analysis !== "object") {
+		return getFallbackAnalysis("")
+	}
+	
+	// Ensure issues is an array
+	const issues = Array.isArray(analysis.issues) ? analysis.issues : []
+	
+	// Normalize issues
+	const normalizedIssues = issues.map((issue: any) => ({
+		type: typeof issue.type === "string" ? issue.type : "unknown",
+		severity: ["error", "warning"
+…[truncated]
+# note: truncated to stay within per-file budget
+
 ===== src/patch/SmartPatcher.ts =====
 /**
  * SmartPatcher engine with STRICT→FUZZY→AST strategy
@@ -2103,6 +2314,156 @@ export function classifyToolMessage(msg: string): ErrorClassification {
 
 	// Default to unknown
 	return
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== src/patch/envelope.ts =====
+/**
+ * Conservative envelope module for secure patching
+ * Provides default security constraints and envelope hardening
+ */
+
+import type { TaskEnvelope, TaskScope } from "../contracts/task-envelope.js"
+
+/**
+ * Default conservative envelope with secure defaults
+ */
+export const DEFAULT_CONSERVATIVE_ENVELOPE: Omit<TaskEnvelope, "plan"> = {
+	id: "conservative-default",
+	scope: {
+		allowPaths: [], // Empty means allow all paths (will be overridden by applySecurityConstraints)
+		denyPaths: [
+			// System and sensitive directories
+			"/etc/",
+			"/usr/",
+			"/bin/",
+			"/sbin/",
+			"/boot/",
+			"/sys/",
+			"/proc/",
+			"/dev/",
+			// Configuration files
+			".env",
+			".env.local",
+			".env.production",
+			"config/secrets",
+			"secrets/",
+			// Package manager lock files (should be updated by package manager)
+			"package-lock.json",
+			"yarn.lock",
+			"pnpm-lock.yaml",
+			// Build artifacts
+			"node_modules/",
+			"dist/",
+			"build/",
+			"out/",
+			".next/",
+			".nuxt/",
+			".cache/",
+			// Version control
+			".git/",
+			".svn/",
+			".hg/",
+			// IDE files
+			".vscode/",
+			".idea/",
+			".vs/",
+			// OS files
+			".DS_Store",
+			"Thumbs.db",
+			// Temporary files
+			"*.tmp",
+			"*.temp",
+			"*.swp",
+			"*.swo",
+		],
+		allowOps: ["search_replace", "anchor"], // Allow only safe operations by default
+		maxRetries: 3,
+		timeBudgetSec: 300, // 5 minutes
+	},
+	metadata: {
+		description: "Conservative security envelope with safe defaults",
+		requester: "supervisor-service",
+		priority: 5,
+		tags: ["conservative", "secure"],
+		createdAt: new Date(),
+	},
+	options: {
+		continueOnError: false,
+		createBackups: true,
+		validateBeforeApply: true,
+		runLinting: false,
+		runTypeChecking: false,
+	},
+}
+
+/**
+ * Applies security constraints to harden a task envelope
+ * @param envelope - The original task envelope
+ * @param customConstraints - Optional custom security constraints
+ * @returns A hardened task envelope with conservative security settings
+ */
+export function applySecurityConstraints(
+	envelope: Omit<TaskEnvelope, "plan">,
+	customConstraints?: Partial<TaskScope>
+): TaskEnvelope {
+	// Start with conservative defaults
+	const hardenedScope: TaskScope = {
+		...DEFAULT_CONSERVATIVE_ENVELOPE.scope,
+		// Apply custom constraints if provided
+		...customConstraints,
+		// Ensure deny paths always include critical system paths
+		denyPaths: [
+			...DEFAULT_CONSERVATIVE_ENVELOPE.scope.denyPaths,
+			...(customConstraints?.denyPaths || []),
+		],
+		// Ensure operation types are safe
+		allowOps: customConstraints?.allowOps || DEFAULT_CONSERVATIVE_ENVELOPE.scope.allowOps,
+		// Limit retries and time budget for security
+		maxRetries: Math.min(
+			customConstraints?.maxRetries || DEFAULT_CONSERVATIVE_ENVELOPE.scope.maxRetries,
+			5 // Maximum 5 retries
+		),
+		timeBudgetSec: Math.min(
+			customConstraints?.timeBudgetSec || DEFAULT_CONSERVATIVE_ENVELOPE.scope.timeBudgetSec,
+			600 // Maximum 10 minutes
+		),
+	}
+
+	// If no allow paths specified, restrict to current working directory and subdirectories
+	if (hardenedScope.allowPaths.length === 0) {
+		hardenedScope.allowPaths = [process.cwd() + "/"]
+	}
+
+	// Ensure allow paths are absolute and normalized
+	hardenedScope.allowPaths = hardenedScope.allowPaths.map(path => {
+		const resolved = path.startsWith("/") ? path : process.cwd() + "/" + path
+		return resolved.endsWith("/") ? resolved : resolved + "/"
+	})
+
+	// Ensure deny paths are absolute and normalized
+	hardenedScope.denyPaths = hardenedScope.denyPaths.map(path => {
+		const resolved = path.startsWith("/") ? path : process.cwd() + "/" + path
+		return resolved.endsWith("/") ? resolved : resolved + "/"
+	})
+
+	return {
+		...envelope,
+		scope: hardenedScope,
+		options: {
+			...DEFAULT_CONSERVATIVE_ENVELOPE.options,
+			...envelope.options,
+			// Always enable security-critical options
+			createBackups: true,
+			validateBeforeApply: true,
+		},
+	}
+}
+
+/**
+ * Creates a conservative envelope for a specific patch plan
+ * @param planId - The ID of the patch plan
+ * @param custom
 …[truncated]
 # note: truncated to stay within per-file budget
 
@@ -3246,6 +3607,160 @@ describe("validateOperation", () => {
 			strategy: PatchStrategy.STRICT,
 			type: "anchor",
 			filePath: "src/
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== src/routes/patch.ts =====
+/**
+ * Patch route for the supervisor service
+ * Provides POST /v1/patch endpoint for applying patches
+ */
+
+import { Request, Response } from "express"
+import { SmartPatcher } from "../patch/SmartPatcher.js"
+import { createConservativeEnvelope, applySecurityConstraints } from "../patch/envelope.js"
+import type { PatchPlan, PatchPlanResult } from "../patch/types.js"
+import type { TaskEnvelope } from "../contracts/task-envelope.js"
+
+/**
+ * Patch request interface
+ */
+export interface PatchRequest {
+	/** The patch plan to execute */
+	plan: PatchPlan
+	/** Optional envelope with security constraints */
+	envelope?: Omit<TaskEnvelope, "plan">
+	/** Whether to run in dry-run mode (no actual file changes) */
+	dryRun?: boolean
+}
+
+/**
+ * Patch response interface
+ */
+export interface PatchResponse {
+	/** Result of the patch execution */
+	result: PatchPlanResult
+	/** The envelope that was used for execution */
+	envelope: TaskEnvelope
+	/** Whether the execution was a dry run */
+	dryRun: boolean
+}
+
+/**
+ * Handles POST /v1/patch requests
+ * Executes patch plans using the SmartPatcher with security constraints
+ */
+export async function handlePatchRequest(req: Request, res: Response): Promise<void> {
+	const startTime = Date.now()
+
+	try {
+		const rawBody = (req as any)?.body ?? {}
+		
+		// Validate request body
+		if (!rawBody.plan || typeof rawBody.plan !== "object") {
+			res.status(400).json({
+				error: "Invalid request: plan is required and must be an object",
+			})
+			return
+		}
+
+		const patchRequest: PatchRequest = {
+			plan: rawBody.plan,
+			envelope: rawBody.envelope,
+			dryRun: rawBody.dryRun === true,
+		}
+
+		// Validate patch plan structure
+		if (!patchRequest.plan.id || !Array.isArray(patchRequest.plan.ops)) {
+			res.status(400).json({
+				error: "Invalid patch plan: must have id and ops array",
+			})
+			return
+		}
+
+		// Create or use provided envelope
+		let envelope: TaskEnvelope
+		if (patchRequest.envelope) {
+			// Apply security constraints to provided envelope
+			const hardenedEnvelope = applySecurityConstraints(patchRequest.envelope)
+			envelope = {
+				...hardenedEnvelope,
+				plan: patchRequest.plan,
+			}
+		} else {
+			// Create conservative envelope
+			const conservativeEnvelope = createConservativeEnvelope(patchRequest.plan.id)
+			envelope = {
+				...conservativeEnvelope,
+				plan: patchRequest.plan,
+			}
+		}
+
+		// Create SmartPatcher instance
+		const patcher = new SmartPatcher()
+
+		// Execute the patch plan
+		const result = await patcher.runPlan(patchRequest.plan, envelope, patchRequest.dryRun)
+
+		// Prepare response
+		const response: PatchResponse = {
+			result,
+			envelope,
+			dryRun: patchRequest.dryRun,
+		}
+
+		// Log execution summary
+		const executionTime = Date.now() - startTime
+		console.log(`Patch execution completed in ${executionTime}ms:`, {
+			planId: result.planId,
+			outcome: result.outcome,
+			total: result.summary.total,
+			successful: result.summary.successful,
+			failed: result.summary.failed,
+			skipped: result.summary.skipped,
+			dryRun: patchRequest.dryRun,
+		})
+
+		// Return success response
+		res.json(response)
+	} catch (error) {
+		console.error("Patch execution error:", error)
+		
+		const executionTime = Date.now() - startTime
+		res.status(500).json({
+			error: "Internal server error during patch execution",
+			details: error instanceof Error ? error.message : "Unknown error",
+			executionTimeMs: executionTime,
+		})
+	}
+}
+
+/**
+ * Validates a patch plan before execution
+ * @param plan - The patch plan to validate
+ * @returns True if the plan is valid, false otherwise
+ */
+export function validatePatchPlan(plan: PatchPlan): boolean {
+	// Check required fields
+	if (!plan.id || typeof plan.id !== "string") {
+		return false
+	}
+
+	if (!Array.isArray(plan.ops)) {
+		return false
+	}
+
+	// Validate each operation
+	for (const op of plan.ops) {
+		if (!op.id || typeof op.id !== "string") {
+			return false
+		}
+
+		if (!op.filePath || typeof op.filePath !== "string") {
+			return false
+		}
+
+		if (!op.type || !["search_replace"
 …[truncated]
 # note: truncated to stay within per-file budget
 

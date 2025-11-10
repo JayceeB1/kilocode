@@ -21,7 +21,7 @@ describe("Config", () => {
 		const config = loadConfig("/non/existent/path.json")
 
 		expect(config.bind).toBe("127.0.0.1")
-		expect(config.port).toBe(43110)
+		expect(config.port).toBe(9611)
 		expect(config.provider).toBe("ollama")
 		expect(config.model).toBe("llama3.1:8b-instruct-q4")
 		expect(config.max_tokens).toBe(768)
@@ -81,7 +81,7 @@ describe("Config", () => {
 
 		// Should fall back to defaults
 		expect(config.bind).toBe("127.0.0.1")
-		expect(config.port).toBe(43110)
+		expect(config.port).toBe(9611)
 	})
 
 	test("should validate config schema", () => {
@@ -96,7 +96,7 @@ describe("Config", () => {
 		const config = loadConfig(testConfigPath)
 
 		// Should fall back to defaults for invalid values
-		expect(config.port).toBe(43110)
+		expect(config.port).toBe(9611)
 		expect(config.temperature).toBe(0.2)
 		expect(config.provider).toBe("ollama")
 	})

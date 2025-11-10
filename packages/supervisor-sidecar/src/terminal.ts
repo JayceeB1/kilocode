@@ -1,5 +1,6 @@
 import * as vscode from "vscode"
 import { SupervisorService } from "./supervisorService.js"
+import { ProblemMatcher } from "./problemMatcher.js"
 
 export interface TerminalCaptureConfig {
 	enabled: boolean
@@ -16,6 +17,7 @@ export class TerminalCapture implements vscode.Disposable {
 	constructor(
 		private supervisorService: SupervisorService,
 		private outputChannel: vscode.OutputChannel,
+		private problemMatcher?: ProblemMatcher,
 	) {
 		this.config = this.loadConfig()
 		this.setupEventListeners()
@@ -72,13 +74,54 @@ export class TerminalCapture implements vscode.Disposable {
 		const terminalName = terminal.name
 		this.terminalData.set(terminalName, [])
 
+		// Log experimental strategy
+		this.outputChannel.appendLine("Using experimental terminal capture strategy")
+
 		// Listen for terminal data
 		// Note: onDidWriteData is not available in current VS Code API
 		// This will need to be implemented differently when the API is available
 		// const dataDisposable = terminal.onDidWriteData((data) => {
 		//   this.captureTerminalData(terminalName, data);
 		// });
+		
+		// Implement capture with onDidWriteTerminalData if strategy is "insiders"
 		const dataDisposable = new vscode.Disposable(() => {})
+		if (process.env.VSCODE_INSIDERS === "1") {
+			// Use insiders API if available
+			// Note: This is a placeholder for when the API becomes available
+			// const actualDataDisposable = terminal.onDidWriteTerminalData((data) => {
+			//   this.captureTerminalData(terminalName, data);
+			// });
+			this.outputChannel.appendLine("Insiders API detected, but onDidWriteTerminalData not yet available")
+		}
+
+		// Add handler for onDidEndTaskProcess to send diagnostic on command failure
+		const taskEndDisposable = vscode.tasks.onDidEndTaskProcess((e) => {
+			if (e.exitCode !== undefined && e.exitCode !== 0 && this.problemMatcher) {
+				// Send a "command_failed" diagnostic to the ProblemMatcher
+				const issue = {
+					type: "command_failed",
+					severity: "error" as const,
+					message: `Command failed with exit code ${e.exitCode}`,
+					suggestion: "Check the terminal output for more details"
+				}
+				
+				// Create a minimal analysis result to pass to problemMatcher
+				const analysisResult = {
+					analysis: {
+						issues: [issue],
+						suggestions: []
+					},
+					metadata: {
+						model: "terminal-capture",
+						provider: "vscode",
+						processingTime: 0
+					}
+				}
+				
+				this.problemMatcher.processAnalysisResult(analysisResult)
+			}
+		})
 
 		const closeDisposable = vscode.window.onDidCloseTerminal((closedTerminal) => {
 			if (closedTerminal.name === terminalName) {
@@ -87,7 +130,7 @@ export class TerminalCapture implements vscode.Disposable {
 			}
 		})
 
-		this.disposables.push(dataDisposable, closeDisposable)
+		this.disposables.push(dataDisposable, taskEndDisposable, closeDisposable)
 	}
 
 	private captureTerminalData(terminalName: string, data: string): void {

@@ -1,0 +1,5002 @@
+# Context digest for webview-ui/src/components# Files considered: 378# Max chars per file: 4000# Max chars per digest: 160000===== ErrorBoundary.tsx =====
+import React, { Component } from "react"
+import { telemetryClient } from "@src/utils/TelemetryClient"
+import { withTranslation, WithTranslation } from "react-i18next"
+import { enhanceErrorWithSourceMaps } from "@src/utils/sourceMapUtils"
+
+type ErrorProps = {
+	children: React.ReactNode
+} & WithTranslation
+
+type ErrorState = {
+	error?: string
+	componentStack?: string | null
+	timestamp?: number
+}
+
+class ErrorBoundary extends Component<ErrorProps, ErrorState> {
+	constructor(props: ErrorProps) {
+		super(props)
+		this.state = {}
+	}
+
+	static getDerivedStateFromError(error: unknown) {
+		let errorMessage = ""
+
+		if (error instanceof Error) {
+			errorMessage = error.stack ?? error.message
+		} else {
+			errorMessage = `${error}`
+		}
+
+		return {
+			error: errorMessage,
+			timestamp: Date.now(),
+		}
+	}
+
+	async componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+		const componentStack = errorInfo.componentStack || ""
+		const enhancedError = await enhanceErrorWithSourceMaps(error, componentStack)
+
+		telemetryClient.capture("error_boundary_caught_error", {
+			error: enhancedError.message,
+			stack: enhancedError.sourceMappedStack || enhancedError.stack,
+			componentStack: enhancedError.sourceMappedComponentStack || componentStack,
+			timestamp: Date.now(),
+			errorType: enhancedError.name,
+		})
+
+		this.setState({
+			error: enhancedError.sourceMappedStack || enhancedError.stack,
+			componentStack: enhancedError.sourceMappedComponentStack || componentStack,
+		})
+	}
+
+	render() {
+		const { t } = this.props
+
+		if (!this.state.error) {
+			return this.props.children
+		}
+
+		const errorDisplay = this.state.error
+		const componentStackDisplay = this.state.componentStack
+
+		const version = process.env.PKG_VERSION || "unknown"
+
+		return (
+			<div>
+				<h2 className="text-lg font-bold mt-0 mb-2">
+					{t("errorBoundary.title")} (v{version})
+				</h2>
+				<p className="mb-4">
+					{t("errorBoundary.reportText")}{" "}
+					<a href="https://github.com/Kilo-Org/kilocode/issues" target="_blank" rel="noreferrer">
+						{t("errorBoundary.githubText")}
+					</a>
+				</p>
+				<p className="mb-2">{t("errorBoundary.copyInstructions")}</p>
+
+				<div className="mb-4">
+					<h3 className="text-md font-bold mb-1">{t("errorBoundary.errorStack")}</h3>
+					<pre className="p-2 border rounded text-sm overflow-auto">{errorDisplay}</pre>
+				</div>
+
+				{componentStackDisplay && (
+					<div>
+						<h3 className="text-md font-bold mb-1">{t("errorBoundary.componentStack")}</h3>
+						<pre className="p-2 border rounded text-sm overflow-auto">{componentStackDisplay}</pre>
+					</div>
+				)}
+			</div>
+		)
+	}
+}
+
+export default withTranslation("common")(ErrorBoundary)
+
+===== chat/Announcement.tsx =====
+import { useState, memo } from "react"
+import { Trans } from "react-i18next"
+import { VSCodeLink } from "@vscode/webview-ui-toolkit/react"
+
+import { Package } from "@roo/package"
+import { useAppTranslation } from "@src/i18n/TranslationContext"
+import { useExtensionState } from "@src/context/ExtensionStateContext"
+import { vscode } from "@src/utils/vscode"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@src/components/ui"
+import { Button } from "@src/components/ui"
+
+interface AnnouncementProps {
+	hideAnnouncement: () => void
+}
+
+/**
+ * You must update the `latestAnnouncementId` in ClineProvider for new
+ * announcements to show to users. This new id will be compared with what's in
+ * state for the 'last announcement shown', and if it's different then the
+ * announcement will render. As soon as an announcement is shown, the id will be
+ * updated in state. This ensures that announcements are not shown more than
+ * once, even if the user doesn't close it themselves.
+ */
+
+const Announcement = ({ hideAnnouncement }: AnnouncementProps) => {
+	const { t } = useAppTranslation()
+	const [open, setOpen] = useState(true)
+	const { cloudIsAuthenticated } = useExtensionState()
+
+	return (
+		<Dialog
+			open={open}
+			onOpenChange={(open) => {
+				setOpen(open)
+
+				if (!open) {
+					hideAnnouncement()
+				}
+			}}>
+			<DialogContent className="max-w-96">
+				<DialogHeader>
+					<DialogTitle>{t("chat:announcement.title", { version: Package.version })}</DialogTitle>
+				</DialogHeader>
+				<div>
+					<div className="mb-3">
+						<Trans
+							i18nKey="chat:announcement.stealthModel.feature"
+							components={{
+								bold: <b />,
+							}}
+						/>
+					</div>
+
+					<p className="mt-3 text-sm text-vscode-descriptionForeground">
+						{t("chat:announcement.stealthModel.note")}
+					</p>
+
+					<div className="mt-4">
+						{!cloudIsAuthenticated ? (
+							<Button
+								onClick={() => {
+									vscode.postMessage({
+										type: "cloudLandingPageSignIn",
+										text: "supernova",
+									})
+								}}
+								className="w-full">
+								{t("chat:announcement.stealthModel.connectButton")}
+							</Button>
+						) : (
+							<>
+								<p className="mb-3">
+									<Trans
+										i18nKey="chat:announcement.stealthModel.selectModel"
+										components={{
+											code: <code />,
+										}}
+									/>
+								</p>
+								<Button
+									onClick={() => {
+										setOpen(false)
+										hideAnnouncement()
+										vscode.postMessage({
+											type: "switchTab",
+											tab: "settings",
+										})
+									}}
+									className="w-full">
+									{t("chat:announcement.stealthModel.goToSettingsButton")}
+								</Button>
+							</>
+						)}
+					</div>
+
+					<div className="mt-4 text-sm text-center">
+						<Trans
+							i18nKey="chat:announcement.socialLinks"
+							components={{
+								xLink: <XLink />,
+								discordLink: <DiscordLink />,
+								redditLink: <RedditLink />,
+							}}
+						/>
+					</div>
+				</div>
+			</DialogContent>
+		</Dialog>
+	)
+}
+
+const XLink = () => (
+	<VSCodeLink
+		href="https://x.com/roo_code"
+		onClick={(e) => {
+			e.preventDefault()
+			vscode.postMessage({ type: "openExternal", url: "https://x.com/roo_code" })
+		}}>
+		X
+	</VSCodeLink>
+)
+
+const DiscordLink = () => (
+	<VSCodeLink
+		href="https://discord.gg/rCQcvT7Fnt"
+		onClick={(e) => {
+			e.preventDefault()
+			vscode.postMessage({ type: "openExternal", url: "https://discord.gg/rCQcvT7Fnt" })
+		}}>
+		Discord
+	</VSCodeLink>
+)
+
+const RedditLink = () => (
+	<VSCodeLink
+		href="https://www.reddit.com/r/RooCode/"
+		onClick={(e) => {
+			e.preventDefault()
+			vscode.postMessage({ type: "openExternal", url: "https://www.reddit.com/r/RooCode/" })
+		}}>
+		r/RooCode
+	</VSCodeLink>
+)
+
+export default memo(Announcement)
+// kilocode_change: file unused, no need to touch anything
+
+===== chat/ApiConfigSelector.tsx =====
+import { useState, useMemo, useCallback } from "react"
+import { Fzf } from "fzf"
+
+import { cn } from "@/lib/utils"
+import { useRooPortal } from "@/components/ui/hooks/useRooPortal"
+import { Popover, PopoverContent, PopoverTrigger, StandardTooltip } from "@/components/ui"
+import { useAppTranslation } from "@/i18n/TranslationContext"
+import { vscode } from "@/utils/vscode"
+import { Button } from "@/components/ui"
+
+import { IconButton } from "./IconButton"
+
+interface ApiConfigSelectorProps {
+	value: string
+	displayName: string
+	disabled?: boolean
+	title: string
+	onChange: (value: string) => void
+	triggerClassName?: string
+	listApiConfigMeta: Array<{ id: string; name: string; modelId?: string }>
+	pinnedApiConfigs?: Record<string, boolean>
+	togglePinnedApiConfig: (id: string) => void
+}
+
+export const ApiConfigSelector = ({
+	value,
+	displayName,
+	disabled = false,
+	title,
+	onChange,
+	triggerClassName = "",
+	listApiConfigMeta,
+	pinnedApiConfigs,
+	togglePinnedApiConfig,
+}: ApiConfigSelectorProps) => {
+	const { t } = useAppTranslation()
+	const [open, setOpen] = useState(false)
+	const [searchValue, setSearchValue] = useState("")
+	const portalContainer = useRooPortal("roo-portal")
+
+	// Create searchable items for fuzzy search.
+	const searchableItems = useMemo(
+		() =>
+			listApiConfigMeta.map((config) => ({
+				original: config,
+				searchStr: config.name,
+			})),
+		[listApiConfigMeta],
+	)
+
+	// Create Fzf instance.
+	const fzfInstance = useMemo(
+		() => new Fzf(searchableItems, { selector: (item) => item.searchStr }),
+		[searchableItems],
+	)
+
+	// Filter configs based on search.
+	const filteredConfigs = useMemo(() => {
+		if (!searchValue) {
+			return listApiConfigMeta
+		}
+
+		const matchingItems = fzfInstance.find(searchValue).map((result) => result.item.original)
+		return matchingItems
+	}, [listApiConfigMeta, searchValue, fzfInstance])
+
+	// Separate pinned and unpinned configs.
+	const { pinnedConfigs, unpinnedConfigs } = useMemo(() => {
+		const pinned = filteredConfigs.filter((config) => pinnedApiConfigs?.[config.id])
+		const unpinned = filteredConfigs.filter((config) => !pinnedApiConfigs?.[config.id])
+		return { pinnedConfigs: pinned, unpinnedConfigs: unpinned }
+	}, [filteredConfigs, pinnedApiConfigs])
+
+	const handleSelect = useCallback(
+		(configId: string) => {
+			onChange(configId)
+			setOpen(false)
+			setSearchValue("")
+		},
+		[onChange],
+	)
+
+	const handleEditClick = useCallback(() => {
+		vscode.postMessage({ type: "switchTab", tab: "settings" })
+		setOpen(false)
+	}, [])
+
+	const renderConfigItem = useCallback(
+		(config: { id: string; name: string; modelId?: string }, isPinned: boolean) => {
+			const isCurrentConfig = config.id === value
+
+			return (
+				<div
+					key={config.id}
+					onClick={() => handleSelect(config.id)}
+					className={cn(
+						"px-3 py-1.5 text-sm cursor-pointer flex items-center group",
+						"hover:bg-vscode-list-hoverBackground",
+						isCurrentConfig &&
+							"bg-vscode-list-activeSelectionBackground text-vscode-list-activeSelectionForeground",
+					)}>
+					<div className="flex-1 min-w-0 flex items-center gap-1 overflow-hidden">
+						<span className="flex-shrink-0">{config.name}</span>
+						{config.modelId && (
+							<>
+								<span
+									className="text-vscode-descriptionForeground opacity-70 min-w-0 overflow-hidden"
+									style={{ direction: "rtl", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+									{config.modelId}
+								</span>
+							</>
+						)}
+					</div>
+					<div className="flex items-center gap-1">
+						{isCurrentConfig && (
+							<div className="size-5 p-1 flex items-center justify-center">
+								<span className="codicon codicon-check text-xs" />
+							</div>
+						)}
+						<StandardTooltip content={isPinned ? t("chat:unpin") : t("chat:pin")}>
+							<Button
+								variant="ghost"
+								size="icon"
+								tabIndex={-1}
+								onClick={(e) => {
+									e.stopPropagation()
+									togglePinnedApiConfig(config.id)
+									vscode.postMessage({ type: "toggleApiConfig
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== chat/AutoApproveDropdown.tsx =====
+import React from "react"
+import { ListChecks, LayoutList, Settings, CheckCheck, X } from "lucide-react"
+
+import { vscode } from "@/utils/vscode"
+import { cn } from "@/lib/utils"
+import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useAppTranslation } from "@/i18n/TranslationContext"
+import { useRooPortal } from "@/components/ui/hooks/useRooPortal"
+import { Popover, PopoverContent, PopoverTrigger, StandardTooltip, ToggleSwitch } from "@/components/ui"
+import { AutoApproveSetting, autoApproveSettingsConfig } from "../settings/AutoApproveToggle"
+import { useAutoApprovalToggles } from "@/hooks/useAutoApprovalToggles"
+import { useAutoApprovalState } from "@/hooks/useAutoApprovalState"
+
+interface AutoApproveDropdownProps {
+	disabled?: boolean
+	triggerClassName?: string
+}
+
+export const AutoApproveDropdown = ({ disabled = false, triggerClassName = "" }: AutoApproveDropdownProps) => {
+	const [open, setOpen] = React.useState(false)
+	const portalContainer = useRooPortal("roo-portal")
+	const { t } = useAppTranslation()
+
+	const {
+		autoApprovalEnabled,
+		setAutoApprovalEnabled,
+		alwaysApproveResubmit,
+		setAlwaysAllowReadOnly,
+		setAlwaysAllowWrite,
+		setAlwaysAllowExecute,
+		setAlwaysAllowBrowser,
+		setAlwaysAllowMcp,
+		setAlwaysAllowModeSwitch,
+		setAlwaysAllowSubtasks,
+		setAlwaysApproveResubmit,
+		setAlwaysAllowFollowupQuestions,
+		setAlwaysAllowUpdateTodoList,
+	} = useExtensionState()
+
+	const baseToggles = useAutoApprovalToggles()
+
+	// Include alwaysApproveResubmit in addition to the base toggles
+	const toggles = React.useMemo(
+		() => ({
+			...baseToggles,
+			alwaysApproveResubmit: alwaysApproveResubmit,
+		}),
+		[baseToggles, alwaysApproveResubmit],
+	)
+
+	const onAutoApproveToggle = React.useCallback(
+		(key: AutoApproveSetting, value: boolean) => {
+			vscode.postMessage({ type: key, bool: value })
+
+			// Update the specific toggle state
+			switch (key) {
+				case "alwaysAllowReadOnly":
+					setAlwaysAllowReadOnly(value)
+					break
+				case "alwaysAllowWrite":
+					setAlwaysAllowWrite(value)
+					break
+				case "alwaysAllowExecute":
+					setAlwaysAllowExecute(value)
+					break
+				case "alwaysAllowBrowser":
+					setAlwaysAllowBrowser(value)
+					break
+				case "alwaysAllowMcp":
+					setAlwaysAllowMcp(value)
+					break
+				case "alwaysAllowModeSwitch":
+					setAlwaysAllowModeSwitch(value)
+					break
+				case "alwaysAllowSubtasks":
+					setAlwaysAllowSubtasks(value)
+					break
+				case "alwaysApproveResubmit":
+					setAlwaysApproveResubmit(value)
+					break
+				case "alwaysAllowFollowupQuestions":
+					setAlwaysAllowFollowupQuestions(value)
+					break
+				case "alwaysAllowUpdateTodoList":
+					setAlwaysAllowUpdateTodoList(value)
+					break
+			}
+
+			// If enabling any option, ensure autoApprovalEnabled is true
+			if (value && !autoApprovalEnabled) {
+				setAutoApprovalEnabled(true)
+				vscode.postMessage({ type: "autoApprovalEnabled", bool: true })
+			}
+		},
+		[
+			autoApprovalEnabled,
+			setAlwaysAllowReadOnly,
+			setAlwaysAllowWrite,
+			setAlwaysAllowExecute,
+			setAlwaysAllowBrowser,
+			setAlwaysAllowMcp,
+			setAlwaysAllowModeSwitch,
+			setAlwaysAllowSubtasks,
+			setAlwaysApproveResubmit,
+			setAlwaysAllowFollowupQuestions,
+			setAlwaysAllowUpdateTodoList,
+			setAutoApprovalEnabled,
+		],
+	)
+
+	const handleSelectAll = React.useCallback(() => {
+		// Enable all options
+		Object.keys(autoApproveSettingsConfig).forEach((key) => {
+			onAutoApproveToggle(key as AutoApproveSetting, true)
+		})
+		// Enable master auto-approval
+		if (!autoApprovalEnabled) {
+			setAutoApprovalEnabled(true)
+			vscode.postMessage({ type: "autoApprovalEnabled", bool: true })
+		}
+	}, [onAutoApproveToggle, autoApprovalEnabled, setAutoApprovalEnabled])
+
+	const handleSelectNone = React.useCallback(() => {
+		// Disable all options
+		Object.keys(autoApproveSettingsConfig).forEach((key) => {
+			onAutoApproveToggle(key as AutoApproveSetting, false)
+		})
+	}, [onAutoApproveToggle])
+
+	const handleOpenSettings = React.useCallback(
+		() =>
+			window.pos
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== chat/AutoApproveMenu.tsx =====
+import { memo, useCallback, useMemo, useState } from "react"
+import { Trans } from "react-i18next"
+import { VSCodeCheckbox, VSCodeLink } from "@vscode/webview-ui-toolkit/react"
+
+import { vscode } from "@src/utils/vscode"
+import { useExtensionState } from "@src/context/ExtensionStateContext"
+import { useAppTranslation } from "@src/i18n/TranslationContext"
+import { AutoApproveToggle, AutoApproveSetting, autoApproveSettingsConfig } from "../settings/AutoApproveToggle"
+import { MaxRequestsInput } from "../settings/MaxRequestsInput" // kilocode_change
+import { MaxCostInput } from "../settings/MaxCostInput" // kilocode_change
+import { StandardTooltip } from "@src/components/ui"
+import { useAutoApprovalState } from "@src/hooks/useAutoApprovalState"
+import { useAutoApprovalToggles } from "@src/hooks/useAutoApprovalToggles"
+
+interface AutoApproveMenuProps {
+	style?: React.CSSProperties
+}
+
+const AutoApproveMenu = ({ style }: AutoApproveMenuProps) => {
+	const [isExpanded, setIsExpanded] = useState(false)
+
+	const {
+		autoApprovalEnabled,
+		setAutoApprovalEnabled,
+		alwaysApproveResubmit,
+		allowedMaxRequests, // kilocode_change
+		allowedMaxCost, // kilocode_change
+		setAlwaysAllowReadOnly,
+		setAlwaysAllowWrite,
+		setAlwaysAllowExecute,
+		setAlwaysAllowBrowser,
+		setAlwaysAllowMcp,
+		setAlwaysAllowModeSwitch,
+		setAlwaysAllowSubtasks,
+		setAlwaysApproveResubmit,
+		setAlwaysAllowFollowupQuestions,
+		setAlwaysAllowUpdateTodoList,
+		setAllowedMaxRequests, // kilocode_change
+		setAllowedMaxCost, // kilocode_change
+	} = useExtensionState()
+
+	const { t } = useAppTranslation()
+
+	const baseToggles = useAutoApprovalToggles()
+
+	// AutoApproveMenu needs alwaysApproveResubmit in addition to the base toggles
+	const toggles = useMemo(
+		() => ({
+			...baseToggles,
+			alwaysApproveResubmit: alwaysApproveResubmit,
+		}),
+		[baseToggles, alwaysApproveResubmit],
+	)
+
+	const { hasEnabledOptions, effectiveAutoApprovalEnabled } = useAutoApprovalState(toggles, autoApprovalEnabled)
+
+	const onAutoApproveToggle = useCallback(
+		(key: AutoApproveSetting, value: boolean) => {
+			vscode.postMessage({ type: key, bool: value })
+
+			// Update the specific toggle state
+			switch (key) {
+				case "alwaysAllowReadOnly":
+					setAlwaysAllowReadOnly(value)
+					break
+				case "alwaysAllowWrite":
+					setAlwaysAllowWrite(value)
+					break
+				case "alwaysAllowExecute":
+					setAlwaysAllowExecute(value)
+					break
+				case "alwaysAllowBrowser":
+					setAlwaysAllowBrowser(value)
+					break
+				case "alwaysAllowMcp":
+					setAlwaysAllowMcp(value)
+					break
+				case "alwaysAllowModeSwitch":
+					setAlwaysAllowModeSwitch(value)
+					break
+				case "alwaysAllowSubtasks":
+					setAlwaysAllowSubtasks(value)
+					break
+				case "alwaysApproveResubmit":
+					setAlwaysApproveResubmit(value)
+					break
+				case "alwaysAllowFollowupQuestions":
+					setAlwaysAllowFollowupQuestions(value)
+					break
+				case "alwaysAllowUpdateTodoList":
+					setAlwaysAllowUpdateTodoList(value)
+					break
+			}
+
+			// Check if we need to update the master auto-approval state
+			// Create a new toggles state with the updated value
+			const updatedToggles = {
+				...toggles,
+				[key]: value,
+			}
+
+			const willHaveEnabledOptions = Object.values(updatedToggles).some((v) => !!v)
+
+			// If enabling the first option, enable master auto-approval
+			if (value && !hasEnabledOptions && willHaveEnabledOptions) {
+				setAutoApprovalEnabled(true)
+				vscode.postMessage({ type: "autoApprovalEnabled", bool: true })
+			}
+			// If disabling the last option, disable master auto-approval
+			else if (!value && hasEnabledOptions && !willHaveEnabledOptions) {
+				setAutoApprovalEnabled(false)
+				vscode.postMessage({ type: "autoApprovalEnabled", bool: false })
+			}
+		},
+		[
+			toggles,
+			hasEnabledOptions,
+			setAlwaysAllowReadOnly,
+			setAlwaysAllowWrite,
+			setAlwaysAllowExecute,
+			setAlwaysAllowBrowser,
+			setAlwaysAllowMcp,
+			setAlwaysAllowModeSwitch,
+			setAlwaysAllowSubtasks,
+			setAlwaysApproveResubmit,
+			setAlwaysAll
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== chat/AutoApprovedRequestLimitWarning.tsx =====
+import React, { memo, useState } from "react"
+import { VSCodeButton } from "@vscode/webview-ui-toolkit/react"
+import { Trans } from "react-i18next"
+
+import type { ClineMessage } from "@roo-code/types"
+
+import { vscode } from "@src/utils/vscode"
+
+type AutoApprovedRequestLimitWarningProps = {
+	message: ClineMessage
+}
+
+export const AutoApprovedRequestLimitWarning = memo(({ message }: AutoApprovedRequestLimitWarningProps) => {
+	const [buttonClicked, setButtonClicked] = useState(false)
+	const { count, type = "requests" } = JSON.parse(message.text ?? "{}")
+
+	if (buttonClicked) {
+		return null
+	}
+
+	const isCostLimit = type === "cost"
+	const titleKey = isCostLimit
+		? "ask.autoApprovedCostLimitReached.title"
+		: "ask.autoApprovedRequestLimitReached.title"
+	const descriptionKey = isCostLimit
+		? "ask.autoApprovedCostLimitReached.description"
+		: "ask.autoApprovedRequestLimitReached.description"
+	const buttonKey = isCostLimit
+		? "ask.autoApprovedCostLimitReached.button"
+		: "ask.autoApprovedRequestLimitReached.button"
+
+	return (
+		<>
+			<div style={{ display: "flex", alignItems: "center", gap: "8px", color: "var(--vscode-foreground)" }}>
+				<span className="codicon codicon-warning" />
+				<span style={{ fontWeight: "bold" }}>
+					<Trans i18nKey={titleKey} ns="chat" />
+				</span>
+			</div>
+
+			<div
+				className="bg-vscode-panel-border flex flex-col gap-3"
+				style={{
+					borderRadius: "4px",
+					display: "flex",
+					marginTop: "15px",
+					padding: "14px 16px 22px",
+					justifyContent: "center",
+				}}>
+				<div className="flex justify-between items-center">
+					<Trans i18nKey={descriptionKey} ns="chat" values={{ count }} />
+				</div>
+				<VSCodeButton
+					style={{ width: "100%", padding: "6px", borderRadius: "4px" }}
+					onClick={(e) => {
+						e.preventDefault()
+						setButtonClicked(true)
+						vscode.postMessage({ type: "askResponse", askResponse: "yesButtonClicked" })
+					}}>
+					<Trans i18nKey={buttonKey} ns="chat" />
+				</VSCodeButton>
+			</div>
+		</>
+	)
+})
+
+===== chat/BatchDiffApproval.tsx =====
+import React, { memo, useState } from "react"
+import CodeAccordian from "../common/CodeAccordian"
+
+interface FileDiff {
+	path: string
+	changeCount: number
+	key: string
+	content: string
+	diffs?: Array<{
+		content: string
+		startLine?: number
+	}>
+}
+
+interface BatchDiffApprovalProps {
+	files: FileDiff[]
+	ts: number
+}
+
+export const BatchDiffApproval = memo(({ files = [], ts }: BatchDiffApprovalProps) => {
+	const [expandedFiles, setExpandedFiles] = useState<Record<string, boolean>>({})
+
+	if (!files?.length) {
+		return null
+	}
+
+	const handleToggleExpand = (filePath: string) => {
+		setExpandedFiles((prev) => ({
+			...prev,
+			[filePath]: !prev[filePath],
+		}))
+	}
+
+	return (
+		<div className="pt-[5px]">
+			<div className="flex flex-col gap-0 border border-border rounded-md p-1">
+				{files.map((file) => {
+					// Combine all diffs into a single diff string for this file
+					const combinedDiff = file.diffs?.map((diff) => diff.content).join("\n\n") || file.content
+
+					return (
+						<div key={`${file.path}-${ts}`}>
+							<CodeAccordian
+								path={file.path}
+								code={combinedDiff}
+								language="diff"
+								isExpanded={expandedFiles[file.path] || false}
+								onToggleExpand={() => handleToggleExpand(file.path)}
+							/>
+						</div>
+					)
+				})}
+			</div>
+		</div>
+	)
+})
+
+BatchDiffApproval.displayName = "BatchDiffApproval"
+
+===== chat/BatchFilePermission.tsx =====
+import { memo } from "react"
+
+import { ToolUseBlock, ToolUseBlockHeader } from "../common/ToolUseBlock"
+import { vscode } from "@src/utils/vscode"
+import { removeLeadingNonAlphanumeric } from "@src/utils/removeLeadingNonAlphanumeric"
+
+interface FilePermissionItem {
+	path: string
+	lineSnippet?: string
+	isOutsideWorkspace?: boolean
+	key: string
+	content?: string // full path
+}
+
+interface BatchFilePermissionProps {
+	files: FilePermissionItem[]
+	onPermissionResponse?: (response: { [key: string]: boolean }) => void
+	ts: number
+}
+
+export const BatchFilePermission = memo(({ files = [], onPermissionResponse, ts }: BatchFilePermissionProps) => {
+	// Don't render if there are no files or no response handler
+	if (!files?.length || !onPermissionResponse) {
+		return null
+	}
+
+	return (
+		<div className="pt-[5px]">
+			{/* Individual files */}
+			<div className="flex flex-col gap-0 border border-border rounded-md p-1">
+				{files.map((file) => {
+					return (
+						<div key={`${file.path}-${ts}`} className="flex items-center gap-2">
+							<ToolUseBlock className="flex-1">
+								<ToolUseBlockHeader
+									onClick={() => vscode.postMessage({ type: "openFile", text: file.content })}>
+									{file.path?.startsWith(".") && <span>.</span>}
+									<span className="whitespace-nowrap overflow-hidden text-ellipsis text-left mr-2 rtl">
+										{removeLeadingNonAlphanumeric(file.path ?? "") + "\u200E"}
+										{file.lineSnippet && ` ${file.lineSnippet}`}
+									</span>
+									<div className="flex-grow"></div>
+									<span className="codicon codicon-link-external text-[13.5px] my-[1px]" />
+								</ToolUseBlockHeader>
+							</ToolUseBlock>
+						</div>
+					)
+				})}
+			</div>
+		</div>
+	)
+})
+
+BatchFilePermission.displayName = "BatchFilePermission"
+
+===== chat/BrowserSessionRow.tsx =====
+import React, { memo, useEffect, useMemo, useRef, useState } from "react"
+import { useSize } from "react-use"
+import deepEqual from "fast-deep-equal"
+import { useTranslation } from "react-i18next"
+import { VSCodeButton } from "@vscode/webview-ui-toolkit/react"
+
+import type { ClineMessage } from "@roo-code/types"
+
+import { BrowserAction, BrowserActionResult, ClineSayBrowserAction } from "@roo/ExtensionMessage"
+
+import { vscode } from "@src/utils/vscode"
+import { useExtensionState } from "@src/context/ExtensionStateContext"
+
+import CodeBlock, { CODE_BLOCK_BG_COLOR } from "../kilocode/common/CodeBlock" // kilocode_change
+import { ChatRowContent } from "./ChatRow"
+import { ProgressIndicator } from "./ProgressIndicator"
+import { Globe, Pointer, SquareTerminal } from "lucide-react"
+
+interface BrowserSessionRowProps {
+	messages: ClineMessage[]
+	isExpanded: (messageTs: number) => boolean
+	onToggleExpand: (messageTs: number) => void
+	lastModifiedMessage?: ClineMessage
+	isLast: boolean
+	onHeightChange: (isTaller: boolean) => void
+	isStreaming: boolean
+}
+
+const BrowserSessionRow = memo((props: BrowserSessionRowProps) => {
+	const { messages, isLast, onHeightChange, lastModifiedMessage } = props
+	const { t } = useTranslation()
+	const prevHeightRef = useRef(0)
+	const [maxActionHeight, setMaxActionHeight] = useState(0)
+	const [consoleLogsExpanded, setConsoleLogsExpanded] = useState(false)
+
+	const { browserViewportSize = "900x600" } = useExtensionState()
+	const [viewportWidth, viewportHeight] = browserViewportSize.split("x").map(Number)
+	const aspectRatio = ((viewportHeight / viewportWidth) * 100).toFixed(2)
+	const defaultMousePosition = `${Math.round(viewportWidth / 2)},${Math.round(viewportHeight / 2)}`
+
+	const isLastApiReqInterrupted = useMemo(() => {
+		// Check if last api_req_started is cancelled
+		const lastApiReqStarted = [...messages].reverse().find((m) => m.say === "api_req_started")
+		if (lastApiReqStarted?.text) {
+			const info = JSON.parse(lastApiReqStarted.text) as { cancelReason: string | null }
+			if (info && info.cancelReason !== null) {
+				return true
+			}
+		}
+		const lastApiReqFailed = isLast && lastModifiedMessage?.ask === "api_req_failed"
+		if (lastApiReqFailed) {
+			return true
+		}
+		return false
+	}, [messages, lastModifiedMessage, isLast])
+
+	const isBrowsing = useMemo(() => {
+		return isLast && messages.some((m) => m.say === "browser_action_result") && !isLastApiReqInterrupted // after user approves, browser_action_result with "" is sent to indicate that the session has started
+	}, [isLast, messages, isLastApiReqInterrupted])
+
+	// Organize messages into pages with current state and next action
+	const pages = useMemo(() => {
+		const result: {
+			currentState: {
+				url?: string
+				screenshot?: string
+				mousePosition?: string
+				consoleLogs?: string
+				messages: ClineMessage[] // messages up to and including the result
+			}
+			nextAction?: {
+				messages: ClineMessage[] // messages leading to next result
+			}
+		}[] = []
+
+		let currentStateMessages: ClineMessage[] = []
+		let nextActionMessages: ClineMessage[] = []
+
+		messages.forEach((message) => {
+			if (message.ask === "browser_action_launch") {
+				// Start first page
+				currentStateMessages = [message]
+			} else if (message.say === "browser_action_result") {
+				if (message.text === "") {
+					// first browser_action_result is an empty string that signals that session has started
+					return
+				}
+				// Complete current state
+				currentStateMessages.push(message)
+				const resultData = JSON.parse(message.text || "{}") as BrowserActionResult
+
+				// Add page with current state and previous next actions
+				result.push({
+					currentState: {
+						url: resultData.currentUrl,
+						screenshot: resultData.screenshot,
+						mousePosition: resultData.currentMousePosition,
+						consoleLogs: resultData.logs,
+						messages: [...currentStateMessages],
+					},
+					nextAction:
+						nextActionMessages.length > 0
+							? {
+									messages: [...nextActionMessages],
+		
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== chat/ChatRow.tsx =====
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useSize } from "react-use"
+import { useTranslation, Trans } from "react-i18next"
+import deepEqual from "fast-deep-equal"
+import { VSCodeBadge } from "@vscode/webview-ui-toolkit/react"
+
+import type { ClineMessage, FollowUpData, SuggestionItem } from "@roo-code/types"
+import { Mode } from "@roo/modes"
+
+import { ClineApiReqInfo, ClineAskUseMcpServer, ClineSayTool } from "@roo/ExtensionMessage"
+import { COMMAND_OUTPUT_STRING } from "@roo/combineCommandSequences"
+import { safeJsonParse } from "@roo/safeJsonParse"
+
+import { useExtensionState } from "@src/context/ExtensionStateContext"
+import { findMatchingResourceOrTemplate } from "@src/utils/mcp"
+import { vscode } from "@src/utils/vscode"
+import { removeLeadingNonAlphanumeric } from "@src/utils/removeLeadingNonAlphanumeric"
+import { getLanguageFromPath } from "@src/utils/getLanguageFromPath"
+
+import { ToolUseBlock, ToolUseBlockHeader } from "../common/ToolUseBlock"
+import UpdateTodoListToolBlock from "./UpdateTodoListToolBlock"
+import CodeAccordian from "../common/CodeAccordian"
+import MarkdownBlock from "../common/MarkdownBlock"
+import { ReasoningBlock } from "./ReasoningBlock"
+import Thumbnails from "../common/Thumbnails"
+import ImageBlock from "../common/ImageBlock"
+import ErrorRow from "./ErrorRow"
+
+import McpResourceRow from "../mcp/McpResourceRow"
+
+import { Mention } from "./Mention"
+import { CheckpointSaved } from "./checkpoints/CheckpointSaved"
+import { FollowUpSuggest } from "./FollowUpSuggest"
+import { LowCreditWarning } from "../kilocode/chat/LowCreditWarning" // kilocode_change
+import { BatchFilePermission } from "./BatchFilePermission"
+import { BatchDiffApproval } from "./BatchDiffApproval"
+import { ProgressIndicator } from "./ProgressIndicator"
+import { Markdown } from "./Markdown"
+import { CommandExecution } from "./CommandExecution"
+import { CommandExecutionError } from "./CommandExecutionError"
+import ReportBugPreview from "./ReportBugPreview"
+
+import { NewTaskPreview } from "../kilocode/chat/NewTaskPreview" // kilocode_change
+import { KiloChatRowGutterBar } from "../kilocode/chat/KiloChatRowGutterBar" // kilocode_change
+import { AutoApprovedRequestLimitWarning } from "./AutoApprovedRequestLimitWarning"
+import { CondenseContextErrorRow, CondensingContextRow, ContextCondenseRow } from "./ContextCondenseRow"
+import CodebaseSearchResultsDisplay from "./CodebaseSearchResultsDisplay"
+import { StandardTooltip } from "../ui" // kilocode_change
+import { FastApplyChatDisplay } from "./kilocode/FastApplyChatDisplay" // kilocode_change
+import { appendImages } from "@src/utils/imageUtils"
+import { McpExecution } from "./McpExecution"
+import { ChatTextArea } from "./ChatTextArea"
+import { MAX_IMAGES_PER_MESSAGE } from "./ChatView"
+import { InvalidModelWarning } from "../kilocode/chat/InvalidModelWarning" // kilocode_change
+import { useSelectedModel } from "../ui/hooks/useSelectedModel"
+import {
+	Eye,
+	FileDiff,
+	ListTree,
+	User,
+	Edit,
+	Trash2,
+	MessageCircleQuestionMark,
+	SquareArrowOutUpRight,
+	FileCode2,
+	PocketKnife,
+	FolderTree,
+	TerminalSquare,
+	MessageCircle,
+} from "lucide-react"
+import { cn } from "@/lib/utils"
+import { SeeNewChangesButtons } from "./kilocode/SeeNewChangesButtons"
+import ChatTimestamps from "./ChatTimestamps" // kilocode_change
+
+interface ChatRowProps {
+	message: ClineMessage
+	lastModifiedMessage?: ClineMessage
+	isExpanded: boolean
+	isLast: boolean
+	isStreaming: boolean
+	onToggleExpand: (ts: number) => void
+	onHeightChange: (isTaller: boolean) => void
+	onSuggestionClick?: (suggestion: SuggestionItem, event?: React.MouseEvent) => void
+	onBatchFileResponse?: (response: { [key: string]: boolean }) => void
+	highlighted?: boolean // kilocode_change: Add highlighted prop
+	enableCheckpoints?: boolean // kilocode_change
+	onFollowUpUnmount?: () => void
+	isFollowUpAnswered?: boolean
+	editable?: boolean
+}
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== chat/ChatTextArea.tsx =====
+import React, { forwardRef, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { useEvent } from "react-use"
+import DynamicTextArea from "react-textarea-autosize"
+
+import { mentionRegex, mentionRegexGlobal, unescapeSpaces } from "@roo/context-mentions"
+import { WebviewMessage } from "@roo/WebviewMessage"
+import { Mode, getAllModes } from "@roo/modes"
+import { ExtensionMessage } from "@roo/ExtensionMessage"
+
+import { vscode } from "@/utils/vscode"
+import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useAppTranslation } from "@/i18n/TranslationContext"
+import {
+	ContextMenuOptionType,
+	getContextMenuOptions,
+	insertMention,
+	removeMention,
+	shouldShowContextMenu,
+	SearchResult,
+} from "@src/utils/context-mentions"
+import { convertToMentionPath } from "@/utils/path-mentions"
+import { DropdownOptionType, Button, StandardTooltip } from "@/components/ui" // kilocode_change
+
+import Thumbnails from "../common/Thumbnails"
+import { ModeSelector } from "./ModeSelector"
+import KiloModeSelector from "../kilocode/KiloModeSelector"
+import { KiloProfileSelector } from "../kilocode/chat/KiloProfileSelector" // kilocode_change
+import { MAX_IMAGES_PER_MESSAGE } from "./ChatView"
+import ContextMenu from "./ContextMenu"
+import { ImageWarningBanner } from "./ImageWarningBanner" // kilocode_change
+import {
+	VolumeX,
+	Pin,
+	Check,
+	// Image, // kilocode_change
+	WandSparkles,
+	SendHorizontal,
+	Paperclip, // kilocode_change
+	MessageSquareX,
+} from "lucide-react"
+import { IndexingStatusBadge } from "./IndexingStatusBadge"
+import { cn } from "@/lib/utils"
+import { usePromptHistory } from "./hooks/usePromptHistory"
+
+// kilocode_change start: pull slash commands from Cline
+import SlashCommandMenu from "@/components/chat/SlashCommandMenu"
+import {
+	SlashCommand,
+	shouldShowSlashCommandsMenu,
+	getMatchingSlashCommands,
+	insertSlashCommand,
+	validateSlashCommand,
+} from "@/utils/slash-commands"
+// kilocode_change end
+
+interface ChatTextAreaProps {
+	inputValue: string
+	setInputValue: (value: string) => void
+	sendingDisabled: boolean
+	selectApiConfigDisabled: boolean
+	placeholderText: string
+	selectedImages: string[]
+	setSelectedImages: React.Dispatch<React.SetStateAction<string[]>>
+	onSend: () => void
+	onSelectImages: () => void
+	shouldDisableImages: boolean
+	onHeightChange?: (height: number) => void
+	mode: Mode
+	setMode: (value: Mode) => void
+	modeShortcutText: string
+	// Edit mode props
+	isEditMode?: boolean
+	onCancel?: () => void
+	sendMessageOnEnter?: boolean // kilocode_change
+}
+
+export const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
+	(
+		{
+			inputValue,
+			setInputValue,
+			sendingDisabled,
+			selectApiConfigDisabled,
+			placeholderText,
+			selectedImages,
+			setSelectedImages,
+			onSend,
+			onSelectImages,
+			shouldDisableImages,
+			onHeightChange,
+			mode,
+			setMode,
+			modeShortcutText,
+			isEditMode = false,
+			onCancel,
+			sendMessageOnEnter = true,
+		},
+		ref,
+	) => {
+		const { t } = useAppTranslation()
+		const {
+			filePaths,
+			openedTabs,
+			currentApiConfigName,
+			listApiConfigMeta,
+			customModes,
+			customModePrompts,
+			cwd,
+			pinnedApiConfigs,
+			togglePinnedApiConfig,
+			localWorkflows, // kilocode_change
+			globalWorkflows, // kilocode_change
+			taskHistoryVersion, // kilocode_change
+			clineMessages,
+		} = useExtensionState()
+
+		// Find the ID and display text for the currently selected API configuration
+		const { currentConfigId, displayName } = useMemo(() => {
+			const currentConfig = listApiConfigMeta?.find((config) => config.name === currentApiConfigName)
+			return {
+				currentConfigId: currentConfig?.id || "",
+				displayName: currentApiConfigName || "", // Use the name directly for display
+			}
+		}, [listApiConfigMeta, currentApiConfigName])
+
+		const [gitCommits, setGitCommits] = useState<any[]>([])
+		const [showDropdown, setShowDropdown] = useState(false)
+		const [fileSearchResults, setFileSearchResults] = useState<SearchResult[]>([])
+
+		//
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== chat/ChatTimestamps.tsx =====
+import React from "react"
+
+interface ChatTimestampsProps {
+	ts: number
+}
+
+const ChatTimestamps: React.FC<ChatTimestampsProps> = ({ ts }) => {
+	return (
+		<span className="inline-flex items-end text-vscode-descriptionForeground font-normal">
+			{new Date(ts).toLocaleTimeString([], {
+				hour: "2-digit",
+				minute: "2-digit",
+			})}
+		</span>
+	)
+}
+
+export default ChatTimestamps
+
+===== chat/ChatView.tsx =====
+import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react"
+import { useDeepCompareEffect, useEvent, useMount } from "react-use"
+import debounce from "debounce"
+import { Virtuoso, type VirtuosoHandle } from "react-virtuoso"
+import removeMd from "remove-markdown"
+import { VSCodeButton } from "@vscode/webview-ui-toolkit/react"
+import useSound from "use-sound"
+import { LRUCache } from "lru-cache"
+import { Trans, useTranslation } from "react-i18next"
+
+import { useDebounceEffect } from "@src/utils/useDebounceEffect"
+import { appendImages } from "@src/utils/imageUtils"
+
+import type { ClineAsk, ClineMessage, McpServerUse } from "@roo-code/types"
+
+import { ClineSayBrowserAction, ClineSayTool, ExtensionMessage } from "@roo/ExtensionMessage"
+import { McpServer, McpTool } from "@roo/mcp"
+import { findLast } from "@roo/array"
+import { FollowUpData, SuggestionItem } from "@roo-code/types"
+import { combineApiRequests } from "@roo/combineApiRequests"
+import { combineCommandSequences } from "@roo/combineCommandSequences"
+import { getApiMetrics } from "@roo/getApiMetrics"
+import { AudioType } from "@roo/WebviewMessage"
+import { getAllModes } from "@roo/modes"
+import { ProfileValidator } from "@roo/ProfileValidator"
+import { getLatestTodo } from "@roo/todo"
+
+import { vscode } from "@src/utils/vscode"
+import {
+	getCommandDecision,
+	CommandDecision,
+	findLongestPrefixMatch,
+	parseCommand,
+} from "@src/utils/command-validation"
+import { useAppTranslation } from "@src/i18n/TranslationContext"
+import { useExtensionState } from "@src/context/ExtensionStateContext"
+import { useSelectedModel } from "@src/components/ui/hooks/useSelectedModel"
+import { usePatcherChat } from "@src/state/patcherSlice"
+import SmartPatchMessage from "./SmartPatchMessage"
+// import RooHero from "@src/components/welcome/RooHero" // kilocode_change: unused
+// import RooTips from "@src/components/welcome/RooTips" // kilocode_change: unused
+import { StandardTooltip } from "@src/components/ui"
+import { useAutoApprovalState } from "@src/hooks/useAutoApprovalState"
+import { useAutoApprovalToggles } from "@src/hooks/useAutoApprovalToggles"
+// import { CloudUpsellDialog } from "@src/components/cloud/CloudUpsellDialog" // kilocode_change: unused
+
+import TelemetryBanner from "../common/TelemetryBanner" // kilocode_change: deactivated for now
+// import VersionIndicator from "../common/VersionIndicator" // kilocode_change: unused
+import { OrganizationSelector } from "../kilocode/common/OrganizationSelector"
+// import { useTaskSearch } from "../history/useTaskSearch" // kilocode_change: unused
+import HistoryPreview from "../history/HistoryPreview"
+import Announcement from "./Announcement"
+import BrowserSessionRow from "./BrowserSessionRow"
+import ChatRow from "./ChatRow"
+import { ChatTextArea } from "./ChatTextArea"
+// import TaskHeader from "./TaskHeader"// kilocode_change
+import KiloTaskHeader from "../kilocode/KiloTaskHeader" // kilocode_change
+import AutoApproveMenu from "./AutoApproveMenu"
+import ToolbarSupervisorToggle from "./ToolbarSupervisorToggle"
+import BottomControls from "../kilocode/BottomControls" // kilocode_change
+import SystemPromptWarning from "./SystemPromptWarning"
+import { showSystemNotification } from "@/kilocode/helpers" // kilocode_change
+// import ProfileViolationWarning from "./ProfileViolationWarning" kilocode_change: unused
+import { CheckpointWarning } from "./CheckpointWarning"
+import { IdeaSuggestionsBox } from "../kilocode/chat/IdeaSuggestionsBox" // kilocode_change
+import { KilocodeNotifications } from "../kilocode/KilocodeNotifications" // kilocode_change
+import { QueuedMessages } from "./QueuedMessages"
+import { buildDocLink } from "@/utils/docLinks"
+// import DismissibleUpsell from "../common/DismissibleUpsell" // kilocode_change: unused
+// import { useCloudUpsell } from "@src/hooks/useCloudUpsell" // kilocode_change: unused
+// import { Cloud } from "lucide-react" // kilocode_change: unused
+
+export i
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== chat/CheckpointRestoreDialog.tsx =====
+import React from "react"
+import { useAppTranslation } from "@src/i18n/TranslationContext"
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from "@src/components/ui"
+
+interface CheckpointRestoreDialogProps {
+	open: boolean
+	onOpenChange: (open: boolean) => void
+	onConfirm: (restoreCheckpoint: boolean) => void
+	type: "edit" | "delete"
+	hasCheckpoint: boolean
+}
+
+export const CheckpointRestoreDialog: React.FC<CheckpointRestoreDialogProps> = ({
+	open,
+	onOpenChange,
+	onConfirm,
+	type,
+	hasCheckpoint,
+}) => {
+	const { t } = useAppTranslation()
+
+	const isEdit = type === "edit"
+	const title = isEdit ? t("common:confirmation.editMessage") : t("common:confirmation.deleteMessage")
+	const description = isEdit
+		? t("common:confirmation.editQuestionWithCheckpoint")
+		: t("common:confirmation.deleteQuestionWithCheckpoint")
+
+	const handleConfirmWithRestore = () => {
+		onConfirm(true)
+		onOpenChange(false)
+	}
+
+	const handleConfirmWithoutRestore = () => {
+		onConfirm(false)
+		onOpenChange(false)
+	}
+
+	return (
+		<AlertDialog open={open} onOpenChange={onOpenChange}>
+			<AlertDialogContent>
+				<AlertDialogHeader>
+					<AlertDialogTitle className="text-lg">{title}</AlertDialogTitle>
+					<AlertDialogDescription className="text-base">{description}</AlertDialogDescription>
+				</AlertDialogHeader>
+				<AlertDialogFooter className="flex-col gap-2">
+					<AlertDialogCancel className="bg-vscode-button-secondaryBackground hover:bg-vscode-button-secondaryHoverBackground text-vscode-button-secondaryForeground border-vscode-button-border">
+						{t("common:answers.cancel")}
+					</AlertDialogCancel>
+					<AlertDialogAction
+						onClick={handleConfirmWithoutRestore}
+						className="bg-vscode-button-background hover:bg-vscode-button-hoverBackground text-vscode-button-foreground border-vscode-button-border">
+						{isEdit ? t("common:confirmation.editOnly") : t("common:confirmation.deleteOnly")}
+					</AlertDialogAction>
+					{hasCheckpoint && (
+						<AlertDialogAction
+							onClick={handleConfirmWithRestore}
+							className="bg-vscode-button-background hover:bg-vscode-button-hoverBackground text-vscode-button-foreground border-vscode-button-border">
+							{t("common:confirmation.restoreToCheckpoint")}
+						</AlertDialogAction>
+					)}
+				</AlertDialogFooter>
+			</AlertDialogContent>
+		</AlertDialog>
+	)
+}
+
+// Export convenience components for backward compatibility
+export const EditMessageWithCheckpointDialog: React.FC<Omit<CheckpointRestoreDialogProps, "type">> = (props) => (
+	<CheckpointRestoreDialog {...props} type="edit" />
+)
+
+export const DeleteMessageWithCheckpointDialog: React.FC<Omit<CheckpointRestoreDialogProps, "type">> = (props) => (
+	<CheckpointRestoreDialog {...props} type="delete" />
+)
+
+===== chat/CheckpointWarning.tsx =====
+import { Trans } from "react-i18next"
+import { VSCodeLink } from "@vscode/webview-ui-toolkit/react"
+
+export const CheckpointWarning = () => {
+	return (
+		<div className="flex items-center p-3 my-3 bg-vscode-inputValidation-warningBackground border border-vscode-inputValidation-warningBorder rounded">
+			<span className="codicon codicon-loading codicon-modifier-spin mr-2" />
+			<span className="text-vscode-foreground">
+				<Trans
+					i18nKey="chat:checkpoint.initializingWarning"
+					components={{
+						settingsLink: (
+							<VSCodeLink
+								href="#"
+								onClick={(e) => {
+									e.preventDefault()
+									window.postMessage(
+										{
+											type: "action",
+											action: "settingsButtonClicked",
+											values: { section: "checkpoints" },
+										},
+										"*",
+									)
+								}}
+								className="inline px-0.5"
+							/>
+						),
+					}}
+				/>
+			</span>
+		</div>
+	)
+}
+
+===== chat/CloudTaskButton.tsx =====
+import { useState, useEffect, useCallback } from "react"
+import { useTranslation } from "react-i18next"
+import { CloudUpload, Copy, Check } from "lucide-react"
+import QRCode from "qrcode"
+
+import type { HistoryItem } from "@roo-code/types"
+
+import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useCopyToClipboard } from "@/utils/clipboard"
+import { Button, Dialog, DialogContent, DialogHeader, DialogTitle, Input, StandardTooltip } from "@/components/ui"
+import { vscode } from "@/utils/vscode"
+
+interface CloudTaskButtonProps {
+	item?: HistoryItem
+	disabled?: boolean
+}
+
+export const CloudTaskButton = ({ item, disabled = false }: CloudTaskButtonProps) => {
+	const [dialogOpen, setDialogOpen] = useState(false)
+	const { t } = useTranslation()
+	const { cloudUserInfo, cloudApiUrl } = useExtensionState()
+	const { copyWithFeedback, showCopyFeedback } = useCopyToClipboard()
+	const [canvasElement, setCanvasElement] = useState<HTMLCanvasElement | null>(null)
+
+	// Generate the cloud URL for the task
+	const cloudTaskUrl = item?.id ? `${cloudApiUrl}/task/${item.id}` : ""
+
+	const generateQRCode = useCallback(
+		(canvas: HTMLCanvasElement, context: string) => {
+			if (!cloudTaskUrl) {
+				// This will run again later when ready
+				return
+			}
+
+			QRCode.toCanvas(
+				canvas,
+				cloudTaskUrl,
+				{
+					width: 140,
+					margin: 0,
+					color: {
+						dark: "#000000",
+						light: "#FFFFFF",
+					},
+				},
+				(error: Error | null | undefined) => {
+					if (error) {
+						console.error(`Error generating QR code (${context}):`, error)
+					}
+				},
+			)
+		},
+		[cloudTaskUrl],
+	)
+
+	// Callback ref to capture canvas element when it mounts
+	const canvasRef = useCallback(
+		(node: HTMLCanvasElement | null) => {
+			if (node) {
+				setCanvasElement(node)
+
+				// Try to generate QR code immediately when canvas is available
+				if (dialogOpen) {
+					generateQRCode(node, "on mount")
+				}
+			} else {
+				setCanvasElement(null)
+			}
+		},
+		[dialogOpen, generateQRCode],
+	)
+
+	// Also generate QR code when dialog opens after canvas is available
+	useEffect(() => {
+		if (dialogOpen && canvasElement) {
+			generateQRCode(canvasElement, "in useEffect")
+		}
+	}, [dialogOpen, canvasElement, generateQRCode])
+
+	if (!cloudUserInfo?.extensionBridgeEnabled || !item?.id) {
+		return null
+	}
+
+	return (
+		<>
+			<StandardTooltip content={t("chat:task.openInCloud")}>
+				<Button
+					variant="ghost"
+					size="icon"
+					disabled={disabled}
+					className="h-7 w-7 p-1.5 hover:bg-vscode-toolbar-hoverBackground"
+					onClick={() => setDialogOpen(true)}
+					data-testid="cloud-task-button"
+					aria-label={t("chat:task.openInCloud")}>
+					<CloudUpload className="h-4 w-4" />
+				</Button>
+			</StandardTooltip>
+
+			<Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+				<DialogContent className="max-w-100">
+					<DialogHeader>
+						<DialogTitle>{t("chat:task.openInCloud")}</DialogTitle>
+					</DialogHeader>
+
+					<div className="flex flex-col space-y-4">
+						<p className="text-center md:text-left max-w-80">{t("chat:task.openInCloudIntro")}</p>
+						<div className="flex justify-center md:justify-start">
+							<div
+								className="w-[170px] h-[170px] bg-white rounded-lg border-border cursor-pointer hover:opacity-70 transition-opacity"
+								onClick={() => vscode.postMessage({ type: "openExternal", url: cloudTaskUrl })}
+								title={t("chat:task.openInCloud")}>
+								<canvas ref={canvasRef} className="m-[15px]" />
+							</div>
+						</div>
+
+						<div className="flex items-center space-x-2">
+							<Input value={cloudTaskUrl} disabled className="flex-1 font-mono text-sm" readOnly />
+							<Button
+								variant="outline"
+								size="icon"
+								onClick={(e) => copyWithFeedback(cloudTaskUrl, e)}
+								className="h-9 w-9">
+								{showCopyFeedback ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+							</Button>
+						</div>
+					</div>
+				</DialogContent>
+			</Dialog>
+		</>
+	)
+}
+
+===== chat/CodeIndexPopover.tsx =====
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
+import { Trans } from "react-i18next"
+import { z } from "zod"
+import {
+	VSCodeButton,
+	VSCodeTextField,
+	VSCodeDropdown,
+	VSCodeOption,
+	VSCodeLink,
+	VSCodeCheckbox,
+} from "@vscode/webview-ui-toolkit/react"
+import * as ProgressPrimitive from "@radix-ui/react-progress"
+import { AlertTriangle } from "lucide-react"
+
+import { CODEBASE_INDEX_DEFAULTS } from "@roo-code/types"
+
+import type { EmbedderProvider } from "@roo/embeddingModels"
+import type { IndexingStatus } from "@roo/ExtensionMessage"
+
+import { vscode } from "@src/utils/vscode"
+import { useExtensionState } from "@src/context/ExtensionStateContext"
+import { useAppTranslation } from "@src/i18n/TranslationContext"
+import { buildDocLink } from "@src/utils/docLinks"
+import { cn } from "@src/lib/utils"
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+	AlertDialogTrigger,
+	Popover,
+	PopoverContent,
+	Slider,
+	StandardTooltip,
+} from "@src/components/ui"
+import { useRooPortal } from "@src/components/ui/hooks/useRooPortal"
+import { useEscapeKey } from "@src/hooks/useEscapeKey"
+
+// Default URLs for providers
+const DEFAULT_QDRANT_URL = "http://localhost:6333"
+const DEFAULT_OLLAMA_URL = "http://localhost:11434"
+
+interface CodeIndexPopoverProps {
+	children: React.ReactNode
+	indexingStatus: IndexingStatus
+}
+
+interface LocalCodeIndexSettings {
+	// Global state settings
+	codebaseIndexEnabled: boolean
+	codebaseIndexQdrantUrl: string
+	codebaseIndexEmbedderProvider: EmbedderProvider
+	codebaseIndexEmbedderBaseUrl?: string
+	codebaseIndexEmbedderModelId: string
+	codebaseIndexEmbedderModelDimension?: number // Generic dimension for all providers
+	codebaseIndexSearchMaxResults?: number
+	codebaseIndexSearchMinScore?: number
+
+	// Secret settings (start empty, will be loaded separately)
+	codeIndexOpenAiKey?: string
+	codeIndexQdrantApiKey?: string
+	codebaseIndexOpenAiCompatibleBaseUrl?: string
+	codebaseIndexOpenAiCompatibleApiKey?: string
+	codebaseIndexGeminiApiKey?: string
+	codebaseIndexMistralApiKey?: string
+	codebaseIndexVercelAiGatewayApiKey?: string
+}
+
+// Validation schema for codebase index settings
+const createValidationSchema = (provider: EmbedderProvider, t: any) => {
+	const baseSchema = z.object({
+		codebaseIndexEnabled: z.boolean(),
+		codebaseIndexQdrantUrl: z
+			.string()
+			.min(1, t("settings:codeIndex.validation.qdrantUrlRequired"))
+			.url(t("settings:codeIndex.validation.invalidQdrantUrl")),
+		codeIndexQdrantApiKey: z.string().optional(),
+	})
+
+	switch (provider) {
+		case "openai":
+			return baseSchema.extend({
+				codeIndexOpenAiKey: z.string().min(1, t("settings:codeIndex.validation.openaiApiKeyRequired")),
+				codebaseIndexEmbedderModelId: z
+					.string()
+					.min(1, t("settings:codeIndex.validation.modelSelectionRequired")),
+			})
+
+		case "ollama":
+			return baseSchema.extend({
+				codebaseIndexEmbedderBaseUrl: z
+					.string()
+					.min(1, t("settings:codeIndex.validation.ollamaBaseUrlRequired"))
+					.url(t("settings:codeIndex.validation.invalidOllamaUrl")),
+				codebaseIndexEmbedderModelId: z.string().min(1, t("settings:codeIndex.validation.modelIdRequired")),
+				codebaseIndexEmbedderModelDimension: z
+					.number()
+					.min(1, t("settings:codeIndex.validation.modelDimensionRequired"))
+					.optional(),
+			})
+
+		case "openai-compatible":
+			return baseSchema.extend({
+				codebaseIndexOpenAiCompatibleBaseUrl: z
+					.string()
+					.min(1, t("settings:codeIndex.validation.baseUrlRequired"))
+					.url(t("settings:codeIndex.validation.invalidBaseUrl")),
+				codebaseIndexOpenAiCompatibleApiKey: z
+					.string()
+					.min(1, t("settings:codeIndex.validation.apiKeyRequired")),
+				codebaseIndexEmbedderModelId: z.string().min(1, t("settings:codeIndex.validation.modelIdRequired")),
+				codebaseIndexEmbedderModelDimens
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== chat/CodebaseSearchResult.tsx =====
+import React from "react"
+import { useTranslation } from "react-i18next"
+import { vscode } from "@src/utils/vscode"
+import { StandardTooltip } from "@/components/ui"
+
+interface CodebaseSearchResultProps {
+	filePath: string
+	score: number
+	startLine: number
+	endLine: number
+	snippet: string
+	language: string
+}
+
+const CodebaseSearchResult: React.FC<CodebaseSearchResultProps> = ({ filePath, score, startLine, endLine }) => {
+	const { t } = useTranslation("chat")
+
+	const handleClick = () => {
+		console.log(filePath)
+		vscode.postMessage({
+			type: "openFile",
+			text: "./" + filePath,
+			values: {
+				line: startLine,
+			},
+		})
+	}
+
+	return (
+		<StandardTooltip content={t("codebaseSearch.resultTooltip", { score: score.toFixed(3) })}>
+			<div
+				onClick={handleClick}
+				className="p-2 border border-[var(--vscode-editorGroup-border)] cursor-pointer hover:bg-secondary hover:text-white">
+				<div className="flex gap-2 items-center overflow-hidden">
+					<span className="text-primary-300 whitespace-nowrap flex-shrink-0">
+						{filePath.split("/").at(-1)}:{startLine === endLine ? startLine : `${startLine}-${endLine}`}
+					</span>
+					<span className="text-gray-500 truncate min-w-0 flex-1">
+						{filePath.split("/").slice(0, -1).join("/")}
+					</span>
+					<span className="text-xs text-vscode-descriptionForeground whitespace-nowrap ml-auto opacity-60">
+						{score.toFixed(3)}
+					</span>
+				</div>
+			</div>
+		</StandardTooltip>
+	)
+}
+
+export default CodebaseSearchResult
+
+===== chat/CodebaseSearchResultsDisplay.tsx =====
+import React, { useState } from "react"
+import CodebaseSearchResult from "./CodebaseSearchResult"
+import { Trans } from "react-i18next"
+
+interface CodebaseSearchResultsDisplayProps {
+	results: Array<{
+		filePath: string
+		score: number
+		startLine: number
+		endLine: number
+		codeChunk: string
+	}>
+}
+
+const CodebaseSearchResultsDisplay: React.FC<CodebaseSearchResultsDisplayProps> = ({ results }) => {
+	const [codebaseSearchResultsExpanded, setCodebaseSearchResultsExpanded] = useState(false)
+
+	return (
+		<div className="flex flex-col -mt-4 gap-1">
+			<div
+				onClick={() => setCodebaseSearchResultsExpanded(!codebaseSearchResultsExpanded)}
+				className="cursor-pointer flex items-center justify-between px-2 py-2 border bg-[var(--vscode-editor-background)] border-[var(--vscode-editorGroup-border)]">
+				<span>
+					<Trans
+						i18nKey="chat:codebaseSearch.didSearch"
+						count={results.length}
+						values={{ count: results.length }}
+					/>
+				</span>
+				<span className={`codicon codicon-chevron-${codebaseSearchResultsExpanded ? "up" : "down"}`}></span>
+			</div>
+
+			{codebaseSearchResultsExpanded && (
+				<div className="flex flex-col gap-1">
+					{results.map((result, idx) => (
+						<CodebaseSearchResult
+							key={idx}
+							filePath={result.filePath}
+							score={result.score}
+							startLine={result.startLine}
+							endLine={result.endLine}
+							language="plaintext"
+							snippet={result.codeChunk}
+						/>
+					))}
+				</div>
+			)}
+		</div>
+	)
+}
+
+export default CodebaseSearchResultsDisplay
+
+===== chat/CommandExecution.tsx =====
+import { useCallback, useState, memo, useMemo } from "react"
+import { useEvent } from "react-use"
+import { ChevronDown, OctagonX } from "lucide-react"
+
+import { CommandExecutionStatus, commandExecutionStatusSchema } from "@roo-code/types"
+
+import { ExtensionMessage } from "@roo/ExtensionMessage"
+import { safeJsonParse } from "@roo/safeJsonParse"
+
+import { COMMAND_OUTPUT_STRING } from "@roo/combineCommandSequences"
+
+import { vscode } from "@src/utils/vscode"
+import { useExtensionState } from "@src/context/ExtensionStateContext"
+import { cn } from "@src/lib/utils"
+import { Button, StandardTooltip } from "@src/components/ui"
+import CodeBlock from "../kilocode/common/CodeBlock" // kilocode_change
+import { CommandPatternSelector } from "./CommandPatternSelector"
+import { parseCommand } from "../../utils/command-validation"
+import { extractPatternsFromCommand } from "../../utils/command-parser"
+import { t } from "i18next"
+
+interface CommandPattern {
+	pattern: string
+	description?: string
+}
+
+interface CommandExecutionProps {
+	executionId: string
+	text?: string
+	icon?: JSX.Element | null
+	title?: JSX.Element | null
+}
+
+export const CommandExecution = ({ executionId, text, icon, title }: CommandExecutionProps) => {
+	const {
+		terminalShellIntegrationDisabled = true, // kilocode_change: default
+		allowedCommands = [],
+		deniedCommands = [],
+		setAllowedCommands,
+		setDeniedCommands,
+	} = useExtensionState()
+
+	const { command, output: parsedOutput } = useMemo(() => parseCommandAndOutput(text), [text])
+
+	// If we aren't opening the VSCode terminal for this command then we default
+	// to expanding the command execution output.
+	const [isExpanded, setIsExpanded] = useState(terminalShellIntegrationDisabled)
+	const [streamingOutput, setStreamingOutput] = useState("")
+	const [status, setStatus] = useState<CommandExecutionStatus | null>(null)
+
+	// The command's output can either come from the text associated with the
+	// task message (this is the case for completed commands) or from the
+	// streaming output (this is the case for running commands).
+	const output = streamingOutput || parsedOutput
+
+	// Extract command patterns from the actual command that was executed
+	const commandPatterns = useMemo<CommandPattern[]>(() => {
+		// First get all individual commands (including subshell commands) using parseCommand
+		const allCommands = parseCommand(command)
+
+		// Then extract patterns from each command using the existing pattern extraction logic
+		const allPatterns = new Set<string>()
+
+		// Add all individual commands first
+		allCommands.forEach((cmd) => {
+			if (cmd.trim()) {
+				allPatterns.add(cmd.trim())
+			}
+		})
+
+		// Then add extracted patterns for each command
+		allCommands.forEach((cmd) => {
+			const patterns = extractPatternsFromCommand(cmd)
+			patterns.forEach((pattern) => allPatterns.add(pattern))
+		})
+
+		return Array.from(allPatterns).map((pattern) => ({
+			pattern,
+		}))
+	}, [command])
+
+	// Handle pattern changes
+	const handleAllowPatternChange = (pattern: string) => {
+		const isAllowed = allowedCommands.includes(pattern)
+		const newAllowed = isAllowed ? allowedCommands.filter((p) => p !== pattern) : [...allowedCommands, pattern]
+		const newDenied = deniedCommands.filter((p) => p !== pattern)
+
+		setAllowedCommands(newAllowed)
+		setDeniedCommands(newDenied)
+		vscode.postMessage({ type: "allowedCommands", commands: newAllowed })
+		vscode.postMessage({ type: "deniedCommands", commands: newDenied })
+	}
+
+	const handleDenyPatternChange = (pattern: string) => {
+		const isDenied = deniedCommands.includes(pattern)
+		const newDenied = isDenied ? deniedCommands.filter((p) => p !== pattern) : [...deniedCommands, pattern]
+		const newAllowed = allowedCommands.filter((p) => p !== pattern)
+
+		setAllowedCommands(newAllowed)
+		setDeniedCommands(newDenied)
+		vscode.postMessage({ type: "allowedCommands", commands: newAllowed })
+		vscode.postMessage({ type: "deniedCommands", commands: newDenied })
+	}
+
+	const onMessage = useCallback(
+		(event: MessageEvent)
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== chat/CommandExecutionError.tsx =====
+import { useCallback } from "react"
+import { useTranslation, Trans } from "react-i18next"
+import { VSCodeLink } from "@vscode/webview-ui-toolkit/react"
+import { buildDocLink } from "../../utils/docLinks"
+
+export const CommandExecutionError = () => {
+	const { t } = useTranslation()
+
+	const onClick = useCallback((e: React.MouseEvent<HTMLAnchorElement>) => {
+		e.preventDefault()
+		window.postMessage({ type: "action", action: "settingsButtonClicked", values: { section: "terminal" } }, "*")
+	}, [])
+
+	return (
+		<div className="text-sm bg-vscode-editor-background border border-vscode-border rounded-xs p-2">
+			<div className="flex flex-col gap-2">
+				<div className="flex items-center">
+					<i className="codicon codicon-warning mr-1 text-vscode-editorWarning-foreground" />
+					<span className="text-vscode-editorWarning-foreground font-medium">
+						{t("chat:shellIntegration.title")}
+					</span>
+				</div>
+				<div>
+					<Trans
+						i18nKey="chat:shellIntegration.description"
+						components={{
+							settingsLink: <VSCodeLink href="#" onClick={onClick} className="inline" />,
+						}}
+					/>
+				</div>
+				<a
+					href={buildDocLink("troubleshooting/shell-integration/", "error_tooltip")}
+					className="underline"
+					style={{ color: "inherit" }}>
+					{t("chat:shellIntegration.troubleshooting")}
+				</a>
+			</div>
+		</div>
+	)
+}
+
+===== chat/CommandPatternSelector.tsx =====
+import React, { useState, useMemo } from "react"
+import { Check, CheckCheck, ChevronUp, X } from "lucide-react"
+import { cn } from "../../lib/utils"
+import { useTranslation } from "react-i18next"
+import { StandardTooltip } from "../ui/standard-tooltip"
+
+interface CommandPattern {
+	pattern: string
+	description?: string
+}
+
+interface CommandPatternSelectorProps {
+	patterns: CommandPattern[]
+	allowedCommands: string[]
+	deniedCommands: string[]
+	onAllowPatternChange: (pattern: string) => void
+	onDenyPatternChange: (pattern: string) => void
+}
+
+export const CommandPatternSelector: React.FC<CommandPatternSelectorProps> = ({
+	patterns,
+	allowedCommands,
+	deniedCommands,
+	onAllowPatternChange,
+	onDenyPatternChange,
+}) => {
+	const { t } = useTranslation()
+	const [isExpanded, setIsExpanded] = useState(false)
+	const [editingStates, setEditingStates] = useState<Record<string, { isEditing: boolean; value: string }>>({})
+
+	// Create a combined list with full command first, then patterns
+	const allPatterns = useMemo(() => {
+		// Create a set to track unique patterns we've already seen
+		const seenPatterns = new Set<string>()
+
+		// Filter out any patterns that are duplicates or are the same as the full command
+		const uniquePatterns = patterns.filter((p) => {
+			if (seenPatterns.has(p.pattern)) {
+				return false
+			}
+			seenPatterns.add(p.pattern)
+			return true
+		})
+
+		return uniquePatterns
+	}, [patterns])
+
+	const getPatternStatus = (pattern: string): "allowed" | "denied" | "none" => {
+		if (allowedCommands.includes(pattern)) return "allowed"
+		if (deniedCommands.includes(pattern)) return "denied"
+		return "none"
+	}
+
+	const getEditState = (pattern: string) => {
+		return editingStates[pattern] || { isEditing: false, value: pattern }
+	}
+
+	const setEditState = (pattern: string, isEditing: boolean, value?: string) => {
+		setEditingStates((prev) => ({
+			...prev,
+			[pattern]: { isEditing, value: value ?? pattern },
+		}))
+	}
+
+	return (
+		<div className="border-t border-vscode-panel-border/50 bg-vscode-sideBar-background/30">
+			<button
+				onClick={() => setIsExpanded(!isExpanded)}
+				className="w-full px-3 py-2 flex items-center justify-between hover:bg-vscode-list-hoverBackground transition-colors">
+				<div className="group flex items-center gap-2 cursor-pointer w-full text-left">
+					<span
+						className={cn(
+							"text-sm flex-1 group-hover:opacity-100",
+							isExpanded ? "opacity-100" : "opacity-40",
+						)}>
+						<CheckCheck className="size-3 inline-block mr-2" />
+						{t("chat:commandExecution.manageCommands")}
+					</span>
+					<ChevronUp
+						className={cn(
+							"group-hover:opacity-100 size-4 transition-transform",
+							isExpanded ? "opacity-100" : "opacity-40 -rotate-180",
+						)}
+					/>
+				</div>
+			</button>
+
+			{isExpanded && (
+				<div className="pl-6 pr-2 pt-1 pb-2 space-y-2">
+					{allPatterns.map((item) => {
+						const editState = getEditState(item.pattern)
+						const status = getPatternStatus(editState.value)
+
+						return (
+							<div key={item.pattern} className="flex items-center gap-2">
+								<div className="flex-1">
+									{editState.isEditing ? (
+										<input
+											type="text"
+											value={editState.value}
+											onChange={(e) => setEditState(item.pattern, true, e.target.value)}
+											onBlur={() => setEditState(item.pattern, false)}
+											onKeyDown={(e) => {
+												if (e.key === "Enter") {
+													setEditState(item.pattern, false)
+												}
+												if (e.key === "Escape") {
+													setEditState(item.pattern, false, item.pattern)
+												}
+											}}
+											className="font-mono text-xs bg-vscode-input-background text-vscode-input-foreground border border-vscode-input-border rounded px-2 py-1.5 w-full focus:outline-0 focus:ring-1 focus:ring-vscode-focusBorder"
+											placeholder={item.pattern}
+											autoFocus
+										/>
+									) : (
+										<div
+											onClick={() => setEditState(item.pattern, true)}
+											classNa
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== chat/ContextCondenseRow.tsx =====
+import { useState } from "react"
+import { useTranslation } from "react-i18next"
+import { VSCodeBadge } from "@vscode/webview-ui-toolkit/react"
+
+import type { ContextCondense } from "@roo-code/types"
+
+import { Markdown } from "./Markdown"
+import { ProgressIndicator } from "./ProgressIndicator"
+
+export const ContextCondenseRow = ({ cost, prevContextTokens, newContextTokens, summary }: ContextCondense) => {
+	const { t } = useTranslation()
+	const [isExpanded, setIsExpanded] = useState(false)
+
+	// Handle null/undefined token values to prevent crashes
+	const prevTokens = prevContextTokens ?? 0
+	const newTokens = newContextTokens ?? 0
+	const displayCost = cost ?? 0
+
+	return (
+		<div className="mb-2">
+			<div
+				className="flex items-center justify-between cursor-pointer select-none"
+				onClick={() => setIsExpanded(!isExpanded)}>
+				<div
+					style={{
+						width: 16,
+						height: 16,
+						display: "flex",
+						alignItems: "center",
+						justifyContent: "center",
+					}}>
+					<span
+						className={`codicon codicon-check`}
+						style={{ color: "var(--vscode-charts-green)", fontSize: 16, marginBottom: "-1.5px" }}
+					/>
+				</div>
+				<div className="flex items-center gap-2 flex-grow">
+					<span className="codicon codicon-compress text-blue-400" />
+					<span className="font-bold text-vscode-foreground">{t("chat:contextCondense.title")}</span>
+					<span className="text-vscode-descriptionForeground text-sm">
+						{prevTokens.toLocaleString()} → {newTokens.toLocaleString()} {t("tokens")}
+					</span>
+					<VSCodeBadge className={displayCost > 0 ? "opacity-100" : "opacity-0"}>
+						${displayCost.toFixed(2)}
+					</VSCodeBadge>
+				</div>
+				<span className={`codicon codicon-chevron-${isExpanded ? "up" : "down"}`}></span>
+			</div>
+
+			{isExpanded && (
+				<div className="mt-2 ml-0 p-4 bg-vscode-editor-background rounded text-vscode-foreground text-sm">
+					<Markdown markdown={summary} />
+				</div>
+			)}
+		</div>
+	)
+}
+
+export const CondensingContextRow = () => {
+	const { t } = useTranslation()
+	return (
+		<div className="flex items-center gap-2">
+			<ProgressIndicator />
+			<span className="codicon codicon-compress text-blue-400" />
+			<span className="font-bold text-vscode-foreground">{t("chat:contextCondense.condensing")}</span>
+		</div>
+	)
+}
+
+export const CondenseContextErrorRow = ({ errorText }: { errorText?: string }) => {
+	const { t } = useTranslation()
+	return (
+		<div className="flex flex-col gap-1">
+			<div className="flex items-center gap-2">
+				<span className="codicon codicon-warning text-vscode-editorWarning-foreground opacity-80 text-base -mb-0.5"></span>
+				<span className="font-bold text-vscode-foreground">{t("chat:contextCondense.errorHeader")}</span>
+			</div>
+			<span className="text-vscode-descriptionForeground text-sm">{errorText}</span>
+		</div>
+	)
+}
+
+===== chat/ContextMenu.tsx =====
+import React, { useEffect, useMemo, useRef, useState } from "react"
+import { getIconForFilePath, getIconUrlByName, getIconForDirectoryPath } from "vscode-material-icons"
+import { Settings } from "lucide-react"
+
+import type { ModeConfig } from "@roo-code/types"
+import type { Command } from "@roo/ExtensionMessage"
+
+import {
+	ContextMenuOptionType,
+	ContextMenuQueryItem,
+	getContextMenuOptions,
+	SearchResult,
+} from "@src/utils/context-mentions"
+import { removeLeadingNonAlphanumeric } from "@src/utils/removeLeadingNonAlphanumeric"
+import { vscode } from "@src/utils/vscode"
+import { buildDocLink } from "@/utils/docLinks"
+import { Trans } from "react-i18next"
+import { t } from "i18next"
+
+interface ContextMenuProps {
+	onSelect: (type: ContextMenuOptionType, value?: string) => void
+	searchQuery: string
+	inputValue: string
+	onMouseDown: () => void
+	selectedIndex: number
+	setSelectedIndex: (index: number) => void
+	selectedType: ContextMenuOptionType | null
+	queryItems: ContextMenuQueryItem[]
+	modes?: ModeConfig[]
+	loading?: boolean
+	dynamicSearchResults?: SearchResult[]
+	commands?: Command[]
+}
+
+const ContextMenu: React.FC<ContextMenuProps> = ({
+	onSelect,
+	searchQuery,
+	onMouseDown,
+	selectedIndex,
+	setSelectedIndex,
+	selectedType,
+	queryItems,
+	modes,
+	dynamicSearchResults = [],
+	commands = [],
+}) => {
+	const [materialIconsBaseUri, setMaterialIconsBaseUri] = useState("")
+	const menuRef = useRef<HTMLDivElement>(null)
+
+	const filteredOptions = useMemo(() => {
+		return getContextMenuOptions(searchQuery, selectedType, queryItems, dynamicSearchResults, modes, commands)
+	}, [searchQuery, selectedType, queryItems, dynamicSearchResults, modes, commands])
+
+	useEffect(() => {
+		if (menuRef.current) {
+			const selectedElement = menuRef.current.children[selectedIndex] as HTMLElement
+			if (selectedElement) {
+				const menuRect = menuRef.current.getBoundingClientRect()
+				const selectedRect = selectedElement.getBoundingClientRect()
+
+				if (selectedRect.bottom > menuRect.bottom) {
+					menuRef.current.scrollTop += selectedRect.bottom - menuRect.bottom
+				} else if (selectedRect.top < menuRect.top) {
+					menuRef.current.scrollTop -= menuRect.top - selectedRect.top
+				}
+			}
+		}
+	}, [selectedIndex])
+
+	// get the icons base uri on mount
+	useEffect(() => {
+		const w = window as any
+		setMaterialIconsBaseUri(w.MATERIAL_ICONS_BASE_URI)
+	}, [])
+
+	const renderOptionContent = (option: ContextMenuQueryItem) => {
+		switch (option.type) {
+			case ContextMenuOptionType.SectionHeader:
+				return (
+					<span
+						style={{
+							fontWeight: "bold",
+							fontSize: "0.85em",
+							opacity: 0.8,
+						}}>
+						{option.label}
+					</span>
+				)
+			case ContextMenuOptionType.Mode:
+				return (
+					<div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+						<div style={{ lineHeight: "1.2" }}>
+							<span>{option.slashCommand}</span>
+						</div>
+						{option.description && (
+							<span
+								style={{
+									opacity: 0.5,
+									fontSize: "0.9em",
+									lineHeight: "1.2",
+									whiteSpace: "nowrap",
+									overflow: "hidden",
+									textOverflow: "ellipsis",
+								}}>
+								{option.description}
+							</span>
+						)}
+					</div>
+				)
+			case ContextMenuOptionType.Command:
+				return (
+					<div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+						<div style={{ lineHeight: "1.2", display: "flex", alignItems: "center", gap: "6px" }}>
+							<span>{option.slashCommand}</span>
+							{option.argumentHint && (
+								<span
+									style={{
+										opacity: 0.5,
+										fontSize: "0.9em",
+										lineHeight: "1.2",
+									}}>
+									{option.argumentHint}
+								</span>
+							)}
+						</div>
+						{option.description && (
+							<span
+								style={{
+									opacity: 0.5,
+									fontSize: "0.9em",
+									lineHeight: "1.2",
+									whiteSpace: "nowrap",
+									overflow: "hidden",
+									textOverflow: "ellipsis",
+								}}>
+								{option.description}
+							</span>
+						)}
+			
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== chat/ContextWindowProgress.tsx =====
+import { useMemo } from "react"
+import { useTranslation } from "react-i18next"
+
+import { formatLargeNumber } from "@/utils/format"
+import { calculateTokenDistribution } from "@/utils/model-utils"
+import { KiloContextWindowProgressTokensUsed } from "../kilocode/chat/KiloContextWindowProgressTokensUsed"
+import { StandardTooltip } from "@/components/ui"
+
+interface ContextWindowProgressProps {
+	contextWindow: number
+	contextTokens: number
+	maxTokens?: number
+}
+
+export const ContextWindowProgress = ({ contextWindow, contextTokens, maxTokens }: ContextWindowProgressProps) => {
+	const { t } = useTranslation()
+
+	// Use the shared utility function to calculate all token distribution values
+	const tokenDistribution = useMemo(
+		() => calculateTokenDistribution(contextWindow, contextTokens, maxTokens),
+		[contextWindow, contextTokens, maxTokens],
+	)
+
+	// Destructure the values we need
+	const { currentPercent, reservedPercent, availableSize, reservedForOutput, availablePercent } = tokenDistribution
+
+	// For display purposes
+	const safeContextWindow = Math.max(0, contextWindow)
+	const safeContextTokens = Math.max(0, contextTokens)
+
+	// Combine all tooltip content into a single tooltip
+	const tooltipContent = (
+		<div className="space-y-1">
+			<div>
+				{t("chat:tokenProgress.tokensUsed", {
+					used: formatLargeNumber(safeContextTokens),
+					total: formatLargeNumber(safeContextWindow),
+				})}
+			</div>
+			{reservedForOutput > 0 && (
+				<div>
+					{t("chat:tokenProgress.reservedForResponse", {
+						amount: formatLargeNumber(reservedForOutput),
+					})}
+				</div>
+			)}
+			{availableSize > 0 && (
+				<div>
+					{t("chat:tokenProgress.availableSpace", {
+						amount: formatLargeNumber(availableSize),
+					})}
+				</div>
+			)}
+		</div>
+	)
+
+	return (
+		<>
+			<div className="flex items-center gap-2 flex-1 whitespace-nowrap">
+				<div data-testid="context-tokens-count">{formatLargeNumber(safeContextTokens)}</div>
+				<StandardTooltip content={tooltipContent} side="top" sideOffset={8}>
+					<div className="flex-1 relative">
+						{/* Main progress bar container */}
+						<div className="flex items-center h-1 rounded-[2px] overflow-hidden w-full bg-[color-mix(in_srgb,var(--vscode-foreground)_20%,transparent)]">
+							{/* Current tokens container */}
+							<div
+								className="relative h-full"
+								style={{ width: `${currentPercent}%` }}
+								data-testid="context-tokens-used">
+								{/* Current tokens used - darkest */}
+								<KiloContextWindowProgressTokensUsed currentPercent={currentPercent} />
+							</div>
+
+							{/* Container for reserved tokens */}
+							<div
+								className="relative h-full"
+								style={{ width: `${reservedPercent}%` }}
+								data-testid="context-reserved-tokens">
+								{/* Reserved for output section - medium gray */}
+								<div className="h-full w-full bg-[color-mix(in_srgb,var(--vscode-foreground)_30%,transparent)] transition-width duration-300 ease-out" />
+							</div>
+
+							{/* Empty section (if any) */}
+							{availablePercent > 0 && (
+								<div
+									className="relative h-full"
+									style={{ width: `${availablePercent}%` }}
+									data-testid="context-available-space-section">
+									{/* Available space - transparent */}
+								</div>
+							)}
+						</div>
+					</div>
+				</StandardTooltip>
+				<div data-testid="context-window-size">{formatLargeNumber(safeContextWindow)}</div>
+			</div>
+		</>
+	)
+}
+
+===== chat/ErrorRow.tsx =====
+import React, { useState, useCallback, memo } from "react"
+import { useTranslation } from "react-i18next"
+import { VSCodeButton } from "@vscode/webview-ui-toolkit/react"
+import { MessageCircleWarning } from "lucide-react"
+import { useCopyToClipboard } from "@src/utils/clipboard"
+import CodeBlock from "../kilocode/common/CodeBlock" // kilocode_change
+
+export interface ErrorRowProps {
+	type: "error" | "mistake_limit" | "api_failure" | "diff_error" | "streaming_failed" | "cancelled"
+	title?: string
+	message: string
+	showCopyButton?: boolean
+	expandable?: boolean
+	defaultExpanded?: boolean
+	additionalContent?: React.ReactNode
+	headerClassName?: string
+	messageClassName?: string
+}
+
+/**
+ * Unified error display component for all error types in the chat
+ */
+export const ErrorRow = memo(
+	({
+		type,
+		title,
+		message,
+		showCopyButton = false,
+		expandable = false,
+		defaultExpanded = false,
+		additionalContent,
+		headerClassName,
+		messageClassName,
+	}: ErrorRowProps) => {
+		const { t } = useTranslation()
+		const [isExpanded, setIsExpanded] = useState(defaultExpanded)
+		const [showCopySuccess, setShowCopySuccess] = useState(false)
+		const { copyWithFeedback } = useCopyToClipboard()
+
+		// Default titles for different error types
+		const getDefaultTitle = () => {
+			if (title) return title
+
+			switch (type) {
+				case "error":
+					return t("chat:error")
+				case "mistake_limit":
+					return t("chat:troubleMessage")
+				case "api_failure":
+					return t("chat:apiRequest.failed")
+				case "streaming_failed":
+					return t("chat:apiRequest.streamingFailed")
+				case "cancelled":
+					return t("chat:apiRequest.cancelled")
+				case "diff_error":
+					return t("chat:diffError.title")
+				default:
+					return null
+			}
+		}
+
+		const handleToggleExpand = useCallback(() => {
+			if (expandable) {
+				setIsExpanded(!isExpanded)
+			}
+		}, [expandable, isExpanded])
+
+		const handleCopy = useCallback(
+			async (e: React.MouseEvent) => {
+				e.stopPropagation()
+				const success = await copyWithFeedback(message)
+				if (success) {
+					setShowCopySuccess(true)
+					setTimeout(() => {
+						setShowCopySuccess(false)
+					}, 1000)
+				}
+			},
+			[message, copyWithFeedback],
+		)
+
+		const errorTitle = getDefaultTitle()
+
+		// For diff_error type with expandable content
+		if (type === "diff_error" && expandable) {
+			return (
+				<div className="mt-0 overflow-hidden mb-2">
+					<div
+						className={`font-normal text-vscode-editor-foreground flex items-center justify-between cursor-pointer ${
+							isExpanded ? "border-b border-vscode-editorGroup-border" : ""
+						}`}
+						onClick={handleToggleExpand}>
+						<div className="flex items-center gap-2 flex-grow">
+							<MessageCircleWarning className="w-4 text-vscode-errorForeground" />
+							<span className="font-bold">{errorTitle}</span>
+						</div>
+						<div className="flex items-center">
+							{showCopyButton && (
+								<VSCodeButton
+									appearance="icon"
+									className="p-0.75 h-6 mr-1 text-vscode-editor-foreground flex items-center justify-center bg-transparent"
+									onClick={handleCopy}>
+									<span className={`codicon codicon-${showCopySuccess ? "check" : "copy"}`} />
+								</VSCodeButton>
+							)}
+							<span className={`codicon codicon-chevron-${isExpanded ? "up" : "down"}`} />
+						</div>
+					</div>
+					{isExpanded && (
+						<div className="p-2 bg-vscode-editor-background border-t-0">
+							<CodeBlock source={message} language="xml" />
+						</div>
+					)}
+				</div>
+			)
+		}
+
+		// Standard error display
+		return (
+			<>
+				{errorTitle && (
+					<div className={headerClassName || "flex items-center gap-2 break-words"}>
+						<MessageCircleWarning className="w-4 text-vscode-errorForeground" />
+						<span className="text-vscode-errorForeground font-bold">{errorTitle}</span>
+					</div>
+				)}
+				<p
+					className={
+						messageClassName || "ml-6 my-0 whitespace-pre-wrap break-words text-vscode-errorForeground"
+					}>
+					{message}
+				</p>
+				{additionalConte
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== chat/FollowUpSuggest.tsx =====
+import { useCallback, useEffect, useState } from "react"
+import { ClipboardCopy } from "lucide-react"
+
+import { Button, StandardTooltip } from "@/components/ui"
+
+import { useAppTranslation } from "@src/i18n/TranslationContext"
+import { useExtensionState } from "@src/context/ExtensionStateContext"
+import { SuggestionItem } from "@roo-code/types"
+
+const DEFAULT_FOLLOWUP_TIMEOUT_MS = 60000
+const COUNTDOWN_INTERVAL_MS = 1000
+
+interface FollowUpSuggestProps {
+	suggestions?: SuggestionItem[]
+	onSuggestionClick?: (suggestion: SuggestionItem, event?: React.MouseEvent) => void
+	ts: number
+	onCancelAutoApproval?: () => void
+	isAnswered?: boolean
+}
+
+export const FollowUpSuggest = ({
+	suggestions = [],
+	onSuggestionClick,
+	ts = 1,
+	onCancelAutoApproval,
+	isAnswered = false,
+}: FollowUpSuggestProps) => {
+	const { autoApprovalEnabled, alwaysAllowFollowupQuestions, followupAutoApproveTimeoutMs } = useExtensionState()
+	const [countdown, setCountdown] = useState<number | null>(null)
+	const [suggestionSelected, setSuggestionSelected] = useState(false)
+	const { t } = useAppTranslation()
+
+	// Start countdown timer when auto-approval is enabled for follow-up questions
+	useEffect(() => {
+		// Only start countdown if auto-approval is enabled for follow-up questions and no suggestion has been selected
+		// Also stop countdown if the question has been answered
+		if (
+			autoApprovalEnabled &&
+			alwaysAllowFollowupQuestions &&
+			suggestions.length > 0 &&
+			!suggestionSelected &&
+			!isAnswered
+		) {
+			// Start with the configured timeout in seconds
+			const timeoutMs =
+				typeof followupAutoApproveTimeoutMs === "number" && !isNaN(followupAutoApproveTimeoutMs)
+					? followupAutoApproveTimeoutMs
+					: DEFAULT_FOLLOWUP_TIMEOUT_MS
+
+			// Convert milliseconds to seconds for the countdown
+			setCountdown(Math.floor(timeoutMs / 1000))
+
+			// Update countdown every second
+			const intervalId = setInterval(() => {
+				setCountdown((prevCountdown) => {
+					if (prevCountdown === null || prevCountdown <= 1) {
+						clearInterval(intervalId)
+						return null
+					}
+					return prevCountdown - 1
+				})
+			}, COUNTDOWN_INTERVAL_MS)
+
+			// Clean up interval on unmount and notify parent component
+			return () => {
+				clearInterval(intervalId)
+				// Notify parent component that this component is unmounting
+				// so it can clear any related timeouts
+				onCancelAutoApproval?.()
+			}
+		} else {
+			setCountdown(null)
+		}
+	}, [
+		autoApprovalEnabled,
+		alwaysAllowFollowupQuestions,
+		suggestions,
+		followupAutoApproveTimeoutMs,
+		suggestionSelected,
+		onCancelAutoApproval,
+		isAnswered,
+	])
+	const handleSuggestionClick = useCallback(
+		(suggestion: SuggestionItem, event: React.MouseEvent) => {
+			// Mark a suggestion as selected if it's not a shift-click (which just copies to input)
+			if (!event.shiftKey) {
+				setSuggestionSelected(true)
+				// Also notify parent component to cancel auto-approval timeout
+				// This prevents race conditions between visual countdown and actual timeout
+				onCancelAutoApproval?.()
+			}
+
+			// Pass the suggestion object to the parent component
+			// The parent component will handle mode switching if needed
+			onSuggestionClick?.(suggestion, event)
+		},
+		[onSuggestionClick, onCancelAutoApproval],
+	)
+
+	// Don't render if there are no suggestions or no click handler.
+	if (!suggestions?.length || !onSuggestionClick) {
+		return null
+	}
+
+	return (
+		<div className="flex mb-2 flex-col h-full gap-2">
+			{suggestions.map((suggestion, index) => {
+				const isFirstSuggestion = index === 0
+
+				return (
+					<div
+						key={`${suggestion.answer}-${ts}`}
+						className="bg-vscode-editor-background rounded-sm w-full relative group">
+						<Button
+							variant="outline"
+							className="text-left whitespace-normal break-words w-full h-auto px-3 py-2 justify-start pr-8"
+							onClick={(event) => handleSuggestionClick(suggestion, event)}
+							aria-label={suggestion.answer}>
+							{suggestion.answer}
+							{isFirstSuggestion && countdow
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== chat/IconButton.tsx =====
+import { cn } from "@src/lib/utils"
+import { Button, StandardTooltip } from "@src/components/ui"
+
+interface IconButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+	iconClass: string
+	title: string
+	disabled?: boolean
+	tooltip?: boolean
+	isLoading?: boolean
+	style?: React.CSSProperties
+}
+
+export const IconButton: React.FC<IconButtonProps> = ({
+	iconClass,
+	title,
+	className,
+	disabled,
+	tooltip = true,
+	isLoading,
+	onClick,
+	style,
+	...props
+}) => (
+	<StandardTooltip content={tooltip ? title : undefined}>
+		<Button
+			aria-label={title}
+			className={cn(
+				"relative inline-flex items-center justify-center",
+				"bg-transparent border-none p-1.5",
+				"rounded-md min-w-[28px] min-h-[28px]",
+				"text-vscode-foreground opacity-85",
+				"transition-all duration-150",
+				"hover:opacity-100 hover:bg-[rgba(255,255,255,0.03)] hover:border-[rgba(255,255,255,0.15)]",
+				"focus:outline-none focus-visible:ring-1 focus-visible:ring-vscode-focusBorder",
+				"active:bg-[rgba(255,255,255,0.1)]",
+				!disabled && "cursor-pointer",
+				disabled &&
+					"opacity-40 cursor-not-allowed grayscale-[30%] hover:bg-transparent hover:border-[rgba(255,255,255,0.08)] active:bg-transparent",
+				className,
+			)}
+			disabled={disabled}
+			onClick={!disabled ? onClick : undefined}
+			style={{ fontSize: 16.5, ...style }}
+			{...props}>
+			<span className={cn("codicon", iconClass, isLoading && "codicon-modifier-spin")} />
+		</Button>
+	</StandardTooltip>
+)
+
+===== chat/ImageWarningBanner.tsx =====
+// kilocode_change - new file
+import React, { useEffect } from "react"
+import { TriangleAlert, X } from "lucide-react"
+
+import { useAppTranslation } from "@/i18n/TranslationContext"
+import { cn } from "@/lib/utils"
+
+interface ImageWarningBannerProps {
+	isVisible: boolean
+	messageKey: string
+	onDismiss: () => void
+	className?: string
+}
+
+export const ImageWarningBanner: React.FC<ImageWarningBannerProps> = ({
+	isVisible,
+	messageKey,
+	onDismiss,
+	className,
+}) => {
+	const { t } = useAppTranslation()
+
+	useEffect(() => {
+		if (isVisible) {
+			const timer = setTimeout(() => {
+				onDismiss()
+			}, 4000) // 4s
+
+			return () => clearTimeout(timer)
+		}
+	}, [isVisible, onDismiss])
+
+	if (!isVisible) {
+		return null
+	}
+
+	return (
+		<div
+			className={cn(
+				"flex items-center gap-2 px-3 py-2 mb-2",
+				"rounded-md text-sm",
+				"animate-in slide-in-from-top-2 duration-200",
+				className,
+			)}
+			style={{
+				border: "1px solid var(--vscode-inputValidation-errorBorder)",
+				color: "var(--vscode-notificationsErrorIcon-foreground)",
+			}}
+			role="alert"
+			aria-live="polite">
+			<TriangleAlert className="w-4 h-4 flex-shrink-0" />
+			<span className="flex-1">{t(messageKey)}</span>
+			<button
+				onClick={onDismiss}
+				className={cn(
+					"flex-shrink-0 p-0.5 rounded cursor-pointer",
+					"hover:bg-black/10 focus:outline-none focus:ring-1",
+					"focus:ring-[var(--vscode-focusBorder)]",
+				)}
+				aria-label="Dismiss warning">
+				<X className="w-3 h-3" />
+			</button>
+		</div>
+	)
+}
+
+===== chat/IndexingStatusBadge.tsx =====
+import React, { useState, useEffect, useMemo } from "react"
+import { Database } from "lucide-react"
+
+import { cn } from "@src/lib/utils"
+import { vscode } from "@src/utils/vscode"
+import { useAppTranslation } from "@/i18n/TranslationContext"
+
+import type { IndexingStatus, IndexingStatusUpdateMessage } from "@roo/ExtensionMessage"
+
+import { useExtensionState } from "@src/context/ExtensionStateContext"
+import { PopoverTrigger, StandardTooltip, Button } from "@src/components/ui"
+
+import { CodeIndexPopover } from "./CodeIndexPopover"
+
+interface IndexingStatusBadgeProps {
+	className?: string
+}
+
+export const IndexingStatusBadge: React.FC<IndexingStatusBadgeProps> = ({ className }) => {
+	const { t } = useAppTranslation()
+	const { cwd } = useExtensionState()
+
+	const [indexingStatus, setIndexingStatus] = useState<IndexingStatus>({
+		systemStatus: "Standby",
+		processedItems: 0,
+		totalItems: 0,
+		currentItemUnit: "items",
+	})
+
+	useEffect(() => {
+		// Request initial indexing status.
+		vscode.postMessage({ type: "requestIndexingStatus" })
+
+		// Set up message listener for status updates.
+		const handleMessage = (event: MessageEvent<IndexingStatusUpdateMessage>) => {
+			if (event.data.type === "indexingStatusUpdate") {
+				const status = event.data.values
+				if (!status.workspacePath || status.workspacePath === cwd) {
+					setIndexingStatus(status)
+				}
+			}
+		}
+
+		window.addEventListener("message", handleMessage)
+
+		return () => {
+			window.removeEventListener("message", handleMessage)
+		}
+	}, [cwd])
+
+	const progressPercentage = useMemo(
+		() =>
+			indexingStatus.totalItems > 0
+				? Math.round((indexingStatus.processedItems / indexingStatus.totalItems) * 100)
+				: 0,
+		[indexingStatus.processedItems, indexingStatus.totalItems],
+	)
+
+	const tooltipText = useMemo(() => {
+		switch (indexingStatus.systemStatus) {
+			case "Standby":
+				return t("chat:indexingStatus.ready")
+			case "Indexing":
+				return t("chat:indexingStatus.indexing", { percentage: progressPercentage })
+			case "Indexed":
+				return t("chat:indexingStatus.indexed")
+			case "Error":
+				return t("chat:indexingStatus.error")
+			default:
+				return t("chat:indexingStatus.status")
+		}
+	}, [indexingStatus.systemStatus, progressPercentage, t])
+
+	const statusColorClass = useMemo(() => {
+		const statusColors = {
+			Standby: "bg-vscode-descriptionForeground/60",
+			Indexing: "bg-yellow-500 animate-pulse",
+			Indexed: "bg-green-500",
+			Error: "bg-red-500",
+		}
+
+		return statusColors[indexingStatus.systemStatus as keyof typeof statusColors] || statusColors.Standby
+	}, [indexingStatus.systemStatus])
+
+	return (
+		<CodeIndexPopover indexingStatus={indexingStatus}>
+			<StandardTooltip content={tooltipText}>
+				<PopoverTrigger asChild>
+					<Button
+						variant="ghost"
+						size="sm"
+						aria-label={tooltipText}
+						className={cn(
+							"relative h-5 w-5 p-0",
+							"text-vscode-foreground opacity-60", // kilocode_change: opacity to match paperclip
+							"hover:opacity-100 hover:bg-[rgba(255,255,255,0.03)]",
+							"focus:outline-none focus-visible:ring-1 focus-visible:ring-vscode-focusBorder",
+							className,
+						)}>
+						<Database className="w-4 h-4" />
+						<span
+							className={cn(
+								"absolute top-0 right-0 w-1.5 h-1.5 rounded-full transition-colors duration-200",
+								statusColorClass,
+							)}
+						/>
+					</Button>
+				</PopoverTrigger>
+			</StandardTooltip>
+		</CodeIndexPopover>
+	)
+}
+
+===== chat/Markdown.tsx =====
+import { memo, useState } from "react"
+import { VSCodeButton } from "@vscode/webview-ui-toolkit/react"
+
+import { useCopyToClipboard } from "@src/utils/clipboard"
+import { StandardTooltip } from "@src/components/ui"
+
+import MarkdownBlock from "../common/MarkdownBlock"
+
+export const Markdown = memo(({ markdown, partial }: { markdown?: string; partial?: boolean }) => {
+	const [isHovering, setIsHovering] = useState(false)
+
+	// Shorter feedback duration for copy button flash.
+	const { copyWithFeedback } = useCopyToClipboard(200)
+
+	if (!markdown || markdown.length === 0) {
+		return null
+	}
+
+	return (
+		<div
+			onMouseEnter={() => setIsHovering(true)}
+			onMouseLeave={() => setIsHovering(false)}
+			style={{ position: "relative" }}>
+			<div style={{ wordBreak: "break-word", overflowWrap: "anywhere" }}>
+				<MarkdownBlock markdown={markdown} />
+			</div>
+			{markdown && !partial && isHovering && (
+				<div
+					style={{
+						position: "absolute",
+						bottom: "-4px",
+						right: "8px",
+						opacity: 0,
+						animation: "fadeIn 0.2s ease-in-out forwards",
+						borderRadius: "4px",
+					}}>
+					<style>{`@keyframes fadeIn { from { opacity: 0; } to { opacity: 1.0; } }`}</style>
+					<StandardTooltip content="Copy as markdown">
+						<VSCodeButton
+							className="copy-button"
+							appearance="icon"
+							style={{
+								height: "24px",
+								border: "none",
+								background: "var(--vscode-editor-background)",
+								transition: "background 0.2s ease-in-out",
+							}}
+							onClick={async () => {
+								const success = await copyWithFeedback(markdown)
+								if (success) {
+									const button = document.activeElement as HTMLElement
+									if (button) {
+										button.style.background = "var(--vscode-button-background)"
+										setTimeout(() => {
+											button.style.background = ""
+										}, 200)
+									}
+								}
+							}}>
+							<span className="codicon codicon-copy" />
+						</VSCodeButton>
+					</StandardTooltip>
+				</div>
+			)}
+		</div>
+	)
+})
+
+===== chat/McpExecution.tsx =====
+import { useCallback, useEffect, useMemo, useState, memo } from "react"
+import { Server, ChevronDown, ChevronRight } from "lucide-react"
+import { useEvent } from "react-use"
+import { useTranslation } from "react-i18next"
+
+import { McpExecutionStatus, mcpExecutionStatusSchema } from "@roo-code/types"
+import { ExtensionMessage, ClineAskUseMcpServer } from "../../../../src/shared/ExtensionMessage"
+import { safeJsonParse } from "../../../../src/shared/safeJsonParse"
+import { cn } from "@src/lib/utils"
+import { Button } from "@src/components/ui"
+import CodeBlock from "../kilocode/common/CodeBlock" // kilocode_change
+import McpToolRow from "../mcp/McpToolRow"
+import { Markdown } from "./Markdown"
+
+interface McpExecutionProps {
+	executionId: string
+	text?: string
+	serverName?: string
+	toolName?: string
+	isArguments?: boolean
+	server?: {
+		tools?: Array<{
+			name: string
+			description?: string
+			alwaysAllow?: boolean
+		}>
+		source?: "global" | "project"
+	}
+	useMcpServer?: ClineAskUseMcpServer
+	alwaysAllowMcp?: boolean
+	initiallyExpanded?: boolean // kilocode_change: For Storybook stories only
+}
+
+function removeRenamedPrefix_kilocode(text: string): string {
+	// Remove "renamed_" prefix from property names in JSON (native tool calling)
+	const prefix = "renamed_"
+	if (!text || !text.startsWith(prefix)) return text
+	return text.substring(prefix.length)
+}
+
+export const McpExecution = ({
+	executionId,
+	text,
+	serverName: initialServerName,
+	toolName: initialToolName,
+	isArguments = false,
+	server,
+	useMcpServer,
+	alwaysAllowMcp = false,
+	initiallyExpanded = false, // kilocode_change
+}: McpExecutionProps) => {
+	const { t } = useTranslation("mcp")
+
+	// State for tracking MCP response status
+	const [status, setStatus] = useState<McpExecutionStatus | null>(null)
+	const [responseText, setResponseText] = useState(text || "")
+	const [argumentsText, setArgumentsText] = useState(text || "")
+	const [serverName, setServerName] = useState(initialServerName)
+	const [toolName, setToolName] = useState(initialToolName)
+
+	// kilocode_change: Main collapse state for the entire MCP execution content
+	const [isResponseExpanded, setIsResponseExpanded] = useState(initiallyExpanded)
+
+	// Try to parse JSON and return both the result and formatted text
+	const tryParseJson = useCallback((text: string): { isJson: boolean; formatted: string } => {
+		if (!text) return { isJson: false, formatted: "" }
+
+		try {
+			const parsed = JSON.parse(text)
+			return {
+				isJson: true,
+				formatted: JSON.stringify(parsed, null, 2),
+			}
+		} catch {
+			return {
+				isJson: false,
+				formatted: text,
+			}
+		}
+	}, [])
+
+	// kilocode_change: Only parse response data when main content is expanded AND complete to avoid parsing partial JSON
+	const responseData = useMemo(() => {
+		if (!isResponseExpanded) {
+			return { isJson: false, formatted: responseText }
+		}
+		// Only try to parse JSON if the response is complete
+		if (status && status.status === "completed") {
+			return tryParseJson(responseText)
+		}
+		// For partial responses, just return as-is without parsing
+		return { isJson: false, formatted: responseText }
+	}, [responseText, isResponseExpanded, tryParseJson, status])
+
+	// Only parse arguments data when complete to avoid parsing partial JSON
+	const argumentsData = useMemo(() => {
+		if (!argumentsText) {
+			return { isJson: false, formatted: "" }
+		}
+
+		// For arguments, we don't have a streaming status, so we check if it looks like complete JSON
+		const trimmed = argumentsText.trim()
+
+		// Basic check for complete JSON structure
+		if (
+			trimmed &&
+			((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]")))
+		) {
+			// Try to parse, but if it fails, return as-is
+			try {
+				const parsed = JSON.parse(trimmed)
+				return {
+					isJson: true,
+					formatted: JSON.stringify(parsed, null, 2),
+				}
+			} catch {
+				// JSON structure looks complete but is invalid, return as-is
+				return { isJson: false, formatted: argumentsText 
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== chat/Mention.tsx =====
+import { mentionRegexGlobal } from "@roo/context-mentions"
+
+import { vscode } from "../../utils/vscode"
+
+interface MentionProps {
+	text?: string
+	withShadow?: boolean
+}
+
+export const Mention = ({ text, withShadow = false }: MentionProps) => {
+	if (!text) {
+		return <>{text}</>
+	}
+
+	const parts = text.split(mentionRegexGlobal).map((part, index) => {
+		if (index % 2 === 0) {
+			// This is regular text.
+			return part
+		} else {
+			// This is a mention.
+			return (
+				<span
+					key={index}
+					className={`${withShadow ? "mention-context-highlight-with-shadow" : "mention-context-highlight"} cursor-pointer`}
+					onClick={() => vscode.postMessage({ type: "openMention", text: part })}>
+					@{part}
+				</span>
+			)
+		}
+	})
+
+	return <>{parts}</>
+}
+
+===== chat/MessageModificationConfirmationDialog.tsx =====
+import React from "react"
+import { useAppTranslation } from "@src/i18n/TranslationContext"
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from "@src/components/ui"
+
+interface MessageModificationConfirmationDialogProps {
+	open: boolean
+	onOpenChange: (open: boolean) => void
+	onConfirm: () => void
+	type: "edit" | "delete"
+}
+
+export const MessageModificationConfirmationDialog: React.FC<MessageModificationConfirmationDialogProps> = ({
+	open,
+	onOpenChange,
+	onConfirm,
+	type,
+}) => {
+	const { t } = useAppTranslation()
+
+	const isEdit = type === "edit"
+	const title = isEdit ? t("common:confirmation.editMessage") : t("common:confirmation.deleteMessage")
+	const description = isEdit ? t("common:confirmation.editWarning") : t("common:confirmation.deleteWarning")
+
+	return (
+		<AlertDialog open={open} onOpenChange={onOpenChange}>
+			<AlertDialogContent>
+				<AlertDialogHeader>
+					<AlertDialogTitle className="text-lg">{title}</AlertDialogTitle>
+					<AlertDialogDescription className="text-base">{description}</AlertDialogDescription>
+				</AlertDialogHeader>
+				<AlertDialogFooter className="flex-col gap-2">
+					<AlertDialogCancel className="bg-vscode-button-secondaryBackground hover:bg-vscode-button-secondaryHoverBackground text-vscode-button-secondaryForeground border-vscode-button-border">
+						{t("common:answers.cancel")}
+					</AlertDialogCancel>
+					<AlertDialogAction
+						onClick={onConfirm}
+						className="bg-vscode-button-background hover:bg-vscode-button-hoverBackground text-vscode-button-foreground border-vscode-button-border">
+						{t("common:confirmation.proceed")}
+					</AlertDialogAction>
+				</AlertDialogFooter>
+			</AlertDialogContent>
+		</AlertDialog>
+	)
+}
+
+// Export convenience components for backward compatibility
+export const EditMessageDialog: React.FC<Omit<MessageModificationConfirmationDialogProps, "type">> = (props) => (
+	<MessageModificationConfirmationDialog {...props} type="edit" />
+)
+
+export const DeleteMessageDialog: React.FC<Omit<MessageModificationConfirmationDialogProps, "type">> = (props) => (
+	<MessageModificationConfirmationDialog {...props} type="delete" />
+)
+
+===== chat/ModeSelector.tsx =====
+import React from "react"
+import { Fzf } from "fzf"
+import { Check, X } from "lucide-react"
+
+import { type ModeConfig, type CustomModePrompts, TelemetryEventName } from "@roo-code/types"
+
+import { type Mode, getAllModes } from "@roo/modes"
+
+import { vscode } from "@/utils/vscode"
+import { telemetryClient } from "@/utils/TelemetryClient"
+import { cn } from "@/lib/utils"
+import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useAppTranslation } from "@/i18n/TranslationContext"
+import { useRooPortal } from "@/components/ui/hooks/useRooPortal"
+import { Popover, PopoverContent, PopoverTrigger, StandardTooltip } from "@/components/ui"
+
+import { IconButton } from "./IconButton"
+
+const SEARCH_THRESHOLD = 6
+
+interface ModeSelectorProps {
+	value: Mode
+	onChange: (value: Mode) => void
+	disabled?: boolean
+	title: string
+	triggerClassName?: string
+	modeShortcutText: string
+	customModes?: ModeConfig[]
+	customModePrompts?: CustomModePrompts
+	disableSearch?: boolean
+}
+
+export const ModeSelector = ({
+	value,
+	onChange,
+	disabled = false,
+	title,
+	triggerClassName = "",
+	modeShortcutText,
+	customModes,
+	customModePrompts,
+	disableSearch = false,
+}: ModeSelectorProps) => {
+	const [open, setOpen] = React.useState(false)
+	const [searchValue, setSearchValue] = React.useState("")
+	const searchInputRef = React.useRef<HTMLInputElement>(null)
+	const selectedItemRef = React.useRef<HTMLDivElement>(null)
+	const scrollContainerRef = React.useRef<HTMLDivElement>(null)
+	const portalContainer = useRooPortal("roo-portal")
+	const { hasOpenedModeSelector, setHasOpenedModeSelector } = useExtensionState()
+	const { t } = useAppTranslation()
+
+	const trackModeSelectorOpened = React.useCallback(() => {
+		// Track telemetry every time the mode selector is opened.
+		telemetryClient.capture(TelemetryEventName.MODE_SELECTOR_OPENED)
+
+		// Track first-time usage for UI purposes.
+		if (!hasOpenedModeSelector) {
+			setHasOpenedModeSelector(true)
+			vscode.postMessage({ type: "hasOpenedModeSelector", bool: true })
+		}
+	}, [hasOpenedModeSelector, setHasOpenedModeSelector])
+
+	// Get all modes including custom modes and merge custom prompt descriptions.
+	const modes = React.useMemo(() => {
+		const allModes = getAllModes(customModes)
+
+		return allModes.map((mode) => ({
+			...mode,
+			description: customModePrompts?.[mode.slug]?.description ?? mode.description,
+		}))
+	}, [customModes, customModePrompts])
+
+	// Find the selected mode.
+	const selectedMode = React.useMemo(() => modes.find((mode) => mode.slug === value), [modes, value])
+
+	// Memoize searchable items for fuzzy search with separate name and
+	// description search.
+	const nameSearchItems = React.useMemo(() => {
+		return modes.map((mode) => ({
+			original: mode,
+			searchStr: [mode.name, mode.slug].filter(Boolean).join(" "),
+		}))
+	}, [modes])
+
+	const descriptionSearchItems = React.useMemo(() => {
+		return modes.map((mode) => ({
+			original: mode,
+			searchStr: mode.description || "",
+		}))
+	}, [modes])
+
+	// Create memoized Fzf instances for name and description searches.
+	const nameFzfInstance = React.useMemo(
+		() => new Fzf(nameSearchItems, { selector: (item) => item.searchStr }),
+		[nameSearchItems],
+	)
+
+	const descriptionFzfInstance = React.useMemo(
+		() => new Fzf(descriptionSearchItems, { selector: (item) => item.searchStr }),
+		[descriptionSearchItems],
+	)
+
+	// Filter modes based on search value using fuzzy search with priority.
+	const filteredModes = React.useMemo(() => {
+		if (!searchValue) return modes
+
+		// First search in names/slugs.
+		const nameMatches = nameFzfInstance.find(searchValue)
+		const nameMatchedModes = new Set(nameMatches.map((result) => result.item.original.slug))
+
+		// Then search in descriptions.
+		const descriptionMatches = descriptionFzfInstance.find(searchValue)
+
+		// Combine results: name matches first, then description matches.
+		const combinedResults = [
+			...nameMatches.map((result) => result.item.original),
+			...descriptionMatches
+				.filter((result) => !nameMa
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== chat/ProfileViolationWarning.tsx =====
+import React from "react"
+import { useAppTranslation } from "@/i18n/TranslationContext"
+
+export const ProfileViolationWarning: React.FC = () => {
+	const { t } = useAppTranslation()
+
+	return (
+		<div className="flex items-center px-4 py-2 mb-2 text-sm rounded bg-vscode-editorWarning-foreground text-vscode-editor-background">
+			<div className="flex items-center justify-center w-5 h-5 mr-2">
+				<span className="codicon codicon-warning" />
+			</div>
+			<span>{t("chat:profileViolationWarning")}</span>
+		</div>
+	)
+}
+
+export default ProfileViolationWarning
+
+===== chat/ProgressIndicator.tsx =====
+import { VSCodeProgressRing } from "@vscode/webview-ui-toolkit/react"
+
+export const ProgressIndicator = () => (
+	<div
+		style={{
+			width: "16px",
+			height: "16px",
+			display: "flex",
+			alignItems: "center",
+			justifyContent: "center",
+		}}>
+		<div style={{ transform: "scale(0.55)", transformOrigin: "center" }}>
+			<VSCodeProgressRing />
+		</div>
+	</div>
+)
+
+===== chat/QueuedMessages.tsx =====
+import { useState } from "react"
+import { useTranslation } from "react-i18next"
+
+import { QueuedMessage } from "@roo-code/types"
+
+import { Button } from "@src/components/ui"
+
+import Thumbnails from "../common/Thumbnails"
+
+import { Mention } from "./Mention"
+
+interface QueuedMessagesProps {
+	queue: QueuedMessage[]
+	onRemove: (index: number) => void
+	onUpdate: (index: number, newText: string) => void
+}
+
+export const QueuedMessages = ({ queue, onRemove, onUpdate }: QueuedMessagesProps) => {
+	const { t } = useTranslation("chat")
+	const [editingStates, setEditingStates] = useState<Record<string, { isEditing: boolean; value: string }>>({})
+
+	if (queue.length === 0) {
+		return null
+	}
+
+	const getEditState = (messageId: string, currentText: string) => {
+		return editingStates[messageId] || { isEditing: false, value: currentText }
+	}
+
+	const setEditState = (messageId: string, isEditing: boolean, value?: string) => {
+		setEditingStates((prev) => ({
+			...prev,
+			[messageId]: { isEditing, value: value ?? prev[messageId]?.value ?? "" },
+		}))
+	}
+
+	const handleSaveEdit = (index: number, messageId: string, newValue: string) => {
+		onUpdate(index, newValue)
+		setEditState(messageId, false)
+	}
+
+	return (
+		<div className="px-[15px] py-[10px] pr-[6px]" data-testid="queued-messages">
+			<div className="text-vscode-descriptionForeground text-md mb-2">{t("queuedMessages.title")}</div>
+			<div className="flex flex-col gap-2 max-h-[300px] overflow-y-auto pr-2">
+				{queue.map((message, index) => {
+					const editState = getEditState(message.id, message.text)
+
+					return (
+						<div
+							key={message.id}
+							className="bg-vscode-editor-background border rounded-xs p-1 overflow-hidden whitespace-pre-wrap flex-shrink-0">
+							<div className="flex justify-between">
+								<div className="flex-grow px-2 py-1 wrap-anywhere">
+									{editState.isEditing ? (
+										<textarea
+											ref={(textarea) => {
+												if (textarea) {
+													// Set cursor at the end
+													textarea.setSelectionRange(
+														textarea.value.length,
+														textarea.value.length,
+													)
+												}
+											}}
+											value={editState.value}
+											onChange={(e) => setEditState(message.id, true, e.target.value)}
+											onBlur={() => handleSaveEdit(index, message.id, editState.value)}
+											onKeyDown={(e) => {
+												if (e.key === "Enter" && !e.shiftKey) {
+													e.preventDefault()
+													handleSaveEdit(index, message.id, editState.value)
+												}
+												if (e.key === "Escape") {
+													setEditState(message.id, false, message.text)
+												}
+											}}
+											className="w-full bg-vscode-input-background text-vscode-input-foreground border border-vscode-input-border rounded px-2 py-1 resize-none focus:outline-0 focus:ring-1 focus:ring-vscode-focusBorder"
+											placeholder={t("chat:editMessage.placeholder")}
+											autoFocus
+											rows={Math.min(editState.value.split("\n").length, 10)}
+										/>
+									) : (
+										<div
+											onClick={() => setEditState(message.id, true, message.text)}
+											className="cursor-pointer hover:bg-vscode-list-hoverBackground px-1 py-0.5 -mx-1 -my-0.5 rounded transition-colors"
+											title={t("chat:queuedMessages.clickToEdit")}>
+											<Mention text={message.text} withShadow />
+										</div>
+									)}
+								</div>
+								<div className="flex">
+									<Button
+										variant="ghost"
+										size="icon"
+										className="shrink-0"
+										onClick={(e) => {
+											e.stopPropagation()
+											onRemove(index)
+										}}>
+										<span className="codicon codicon-trash" />
+									</Button>
+								</div>
+							</div>
+							{message.images && message.images.length > 0 && (
+								<Thumbnails images={message.images} style={{ marginTop: "8px" }} />
+							)}
+						</div>
+					)
+				})}
+			</div>
+		</div>
+	)
+}
+
+===== chat/ReasoningBlock.tsx =====
+import { useEffect, useRef, useState } from "react"
+import { useTranslation } from "react-i18next"
+import { useExtensionState } from "@src/context/ExtensionStateContext"
+
+import MarkdownBlock from "../common/MarkdownBlock"
+import { Lightbulb, ChevronUp } from "lucide-react"
+import { cn } from "@/lib/utils"
+
+interface ReasoningBlockProps {
+	content: string
+	ts: number
+	isStreaming: boolean
+	isLast: boolean
+	metadata?: any
+}
+
+export const ReasoningBlock = ({ content, isStreaming, isLast }: ReasoningBlockProps) => {
+	const { t } = useTranslation()
+	const { reasoningBlockCollapsed } = useExtensionState()
+
+	const [isCollapsed, setIsCollapsed] = useState(reasoningBlockCollapsed)
+
+	const startTimeRef = useRef<number>(Date.now())
+	const [elapsed, setElapsed] = useState<number>(0)
+	const contentRef = useRef<HTMLDivElement>(null)
+
+	useEffect(() => {
+		setIsCollapsed(reasoningBlockCollapsed)
+	}, [reasoningBlockCollapsed])
+
+	useEffect(() => {
+		if (isLast && isStreaming) {
+			const tick = () => setElapsed(Date.now() - startTimeRef.current)
+			tick()
+			const id = setInterval(tick, 1000)
+			return () => clearInterval(id)
+		}
+	}, [isLast, isStreaming])
+
+	const seconds = Math.floor(elapsed / 1000)
+	const secondsLabel = t("chat:reasoning.seconds", { count: seconds })
+
+	const handleToggle = () => {
+		setIsCollapsed(!isCollapsed)
+	}
+
+	return (
+		<div className="group">
+			<div
+				className="flex items-center justify-between mb-2.5 pr-2 cursor-pointer select-none"
+				onClick={handleToggle}>
+				<div className="flex items-center gap-2">
+					<Lightbulb className="w-4" />
+					<span className="font-bold text-vscode-foreground">{t("chat:reasoning.thinking")}</span>
+					{elapsed > 0 && (
+						<span className="text-sm text-vscode-descriptionForeground mt-0.5">{secondsLabel}</span>
+					)}
+				</div>
+				<div className="flex items-center gap-2">
+					<ChevronUp
+						className={cn(
+							"w-4 transition-all opacity-0 group-hover:opacity-100",
+							isCollapsed && "-rotate-180",
+						)}
+					/>
+				</div>
+			</div>
+			{(content?.trim()?.length ?? 0) > 0 && !isCollapsed && (
+				<div
+					ref={contentRef}
+					className="border-l border-vscode-descriptionForeground/20 ml-2 pl-4 pb-1 text-vscode-descriptionForeground">
+					<MarkdownBlock markdown={content} />
+				</div>
+			)}
+		</div>
+	)
+}
+
+===== chat/ReportBugPreview.tsx =====
+import React from "react"
+import MarkdownBlock from "../common/MarkdownBlock"
+
+interface ReportBugPreviewProps {
+	data: string
+}
+
+const ReportBugPreview: React.FC<ReportBugPreviewProps> = ({ data }) => {
+	// Parse the JSON data from the context string
+	const bugData = React.useMemo(() => {
+		try {
+			return JSON.parse(data || "{}")
+		} catch (e) {
+			console.error("Failed to parse bug report data", e)
+			return {}
+		}
+	}, [data])
+
+	return (
+		<div className="bg-[var(--vscode-badge-background)] text-[var(--vscode-badge-foreground)] rounded-[3px] p-[14px]">
+			<h3 className="font-bold text-base mb-3 mt-0">{bugData.title || "Bug Report"}</h3>
+
+			<div className="space-y-3 text-sm">
+				{bugData.description && (
+					<div>
+						<div className="font-semibold">What Happened?</div>
+						<MarkdownBlock markdown={bugData.description} />
+					</div>
+				)}
+				{bugData.provider_and_model && (
+					<div>
+						<div className="font-semibold">Provider/Model</div>
+						<MarkdownBlock markdown={bugData.provider_and_model} />
+					</div>
+				)}
+
+				{bugData.operating_system && (
+					<div>
+						<div className="font-semibold">Operating System</div>
+						<MarkdownBlock markdown={bugData.operating_system} />
+					</div>
+				)}
+
+				{bugData.system_info && (
+					<div>
+						<div className="font-semibold">System Info</div>
+						<MarkdownBlock markdown={bugData.system_info} />
+					</div>
+				)}
+
+				{bugData.kilocode_version && (
+					<div>
+						<div className="font-semibold">Kilo Code Version</div>
+						<MarkdownBlock markdown={bugData.kilocode_version} />
+					</div>
+				)}
+			</div>
+		</div>
+	)
+}
+
+export default ReportBugPreview
+
+===== chat/ShareButton.tsx =====
+import { useState, useEffect } from "react"
+import { useTranslation } from "react-i18next"
+import { Share2 } from "lucide-react"
+
+import { type HistoryItem, type ShareVisibility, TelemetryEventName } from "@roo-code/types"
+
+import { vscode } from "@/utils/vscode"
+import { telemetryClient } from "@/utils/TelemetryClient"
+import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useCloudUpsell } from "@/hooks/useCloudUpsell"
+import { CloudUpsellDialog } from "@/components/cloud/CloudUpsellDialog"
+import {
+	Button,
+	Popover,
+	PopoverContent,
+	PopoverTrigger,
+	Command,
+	CommandList,
+	CommandItem,
+	CommandGroup,
+	StandardTooltip,
+} from "@/components/ui"
+
+interface ShareButtonProps {
+	item?: HistoryItem
+	disabled?: boolean
+	showLabel?: boolean
+}
+
+export const ShareButton = ({ item, disabled = false, showLabel = false }: ShareButtonProps) => {
+	const [shareDropdownOpen, setShareDropdownOpen] = useState(false)
+	const [shareSuccess, setShareSuccess] = useState<{ visibility: ShareVisibility; url: string } | null>(null)
+	const [wasConnectInitiatedFromShare, setWasConnectInitiatedFromShare] = useState(false)
+	const { t } = useTranslation()
+	const { cloudUserInfo } = useExtensionState()
+
+	// Use enhanced cloud upsell hook with auto-open on auth success
+	const {
+		isOpen: connectModalOpen,
+		openUpsell,
+		closeUpsell,
+		handleConnect,
+		isAuthenticated: cloudIsAuthenticated,
+		sharingEnabled,
+	} = useCloudUpsell({
+		onAuthSuccess: () => {
+			// Auto-open share dropdown after successful authentication
+			setShareDropdownOpen(true)
+			setWasConnectInitiatedFromShare(false)
+		},
+	})
+
+	// Auto-open popover when user becomes authenticated after clicking Connect from share button
+	useEffect(() => {
+		if (wasConnectInitiatedFromShare && cloudIsAuthenticated) {
+			setShareDropdownOpen(true)
+			setWasConnectInitiatedFromShare(false)
+		}
+	}, [wasConnectInitiatedFromShare, cloudIsAuthenticated])
+
+	// Listen for share success messages from the extension
+	useEffect(() => {
+		const handleMessage = (event: MessageEvent) => {
+			const message = event.data
+			if (message.type === "shareTaskSuccess") {
+				setShareSuccess({
+					visibility: message.visibility,
+					url: message.text,
+				})
+				// Auto-hide success message and close popover after 5 seconds
+				setTimeout(() => {
+					setShareSuccess(null)
+					setShareDropdownOpen(false)
+				}, 5000)
+			}
+		}
+
+		window.addEventListener("message", handleMessage)
+		return () => window.removeEventListener("message", handleMessage)
+	}, [])
+
+	const handleShare = (visibility: ShareVisibility) => {
+		// Clear any previous success state
+		setShareSuccess(null)
+
+		// Send telemetry for share action
+		if (visibility === "organization") {
+			telemetryClient.capture(TelemetryEventName.SHARE_ORGANIZATION_CLICKED)
+		} else {
+			telemetryClient.capture(TelemetryEventName.SHARE_PUBLIC_CLICKED)
+		}
+
+		vscode.postMessage({
+			type: "shareCurrentTask",
+			visibility,
+		})
+		// Don't close the dropdown immediately - let success message show first
+	}
+
+	const handleConnectToCloud = () => {
+		setWasConnectInitiatedFromShare(true)
+		handleConnect()
+		setShareDropdownOpen(false)
+	}
+
+	const handleShareButtonClick = () => {
+		// Send telemetry for share button click
+		telemetryClient.capture(TelemetryEventName.SHARE_BUTTON_CLICKED)
+
+		if (!cloudIsAuthenticated) {
+			// Show modal for unauthenticated users
+			openUpsell()
+			telemetryClient.capture(TelemetryEventName.SHARE_CONNECT_TO_CLOUD_CLICKED)
+		} else {
+			// Show popover for authenticated users
+			setShareDropdownOpen(true)
+		}
+	}
+
+	// Determine share button state
+	const getShareButtonState = () => {
+		if (!cloudIsAuthenticated) {
+			return {
+				disabled: false,
+				title: t("chat:task.share"),
+				showPopover: false, // We'll show modal instead
+			}
+		} else if (!sharingEnabled) {
+			return {
+				disabled: true,
+				title: t("chat:task.sharingDisabledByOrganization"),
+				showPopover: false,
+			}
+		} else {
+			return {
+				disabled: false,
+				title: t("ch
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== chat/SlashCommandItem.tsx =====
+import React from "react"
+import { Edit, Trash2 } from "lucide-react"
+
+import type { Command } from "@roo/ExtensionMessage"
+
+import { useAppTranslation } from "@/i18n/TranslationContext"
+import { Button, StandardTooltip } from "@/components/ui"
+import { vscode } from "@/utils/vscode"
+
+interface SlashCommandItemProps {
+	command: Command
+	onDelete: (command: Command) => void
+	onClick?: (command: Command) => void
+}
+
+export const SlashCommandItem: React.FC<SlashCommandItemProps> = ({ command, onDelete, onClick }) => {
+	const { t } = useAppTranslation()
+
+	// Built-in commands cannot be edited or deleted
+	const isBuiltIn = command.source === "built-in"
+
+	const handleEdit = () => {
+		if (command.filePath) {
+			vscode.postMessage({
+				type: "openFile",
+				text: command.filePath,
+			})
+		} else {
+			// Fallback: request to open command file by name and source
+			vscode.postMessage({
+				type: "openCommandFile",
+				text: command.name,
+				values: { source: command.source },
+			})
+		}
+	}
+
+	const handleDelete = () => {
+		onDelete(command)
+	}
+
+	return (
+		<div className="px-4 py-2 text-sm flex items-center group hover:bg-vscode-list-hoverBackground">
+			{/* Command name - clickable */}
+			<div className="flex-1 min-w-0 cursor-pointer" onClick={() => onClick?.(command)}>
+				<div>
+					<span className="truncate text-vscode-foreground">{command.name}</span>
+					{command.description && (
+						<div className="text-xs text-vscode-descriptionForeground truncate mt-0.5">
+							{command.description}
+						</div>
+					)}
+				</div>
+			</div>
+
+			{/* Action buttons - only show for non-built-in commands */}
+			{!isBuiltIn && (
+				<div className="flex items-center gap-2 ml-2">
+					<StandardTooltip content={t("chat:slashCommands.editCommand")}>
+						<Button
+							variant="ghost"
+							size="icon"
+							tabIndex={-1}
+							onClick={handleEdit}
+							className="size-6 flex items-center justify-center opacity-60 hover:opacity-100">
+							<Edit className="w-4 h-4" />
+						</Button>
+					</StandardTooltip>
+
+					<StandardTooltip content={t("chat:slashCommands.deleteCommand")}>
+						<Button
+							variant="ghost"
+							size="icon"
+							tabIndex={-1}
+							onClick={handleDelete}
+							className="size-6 flex items-center justify-center opacity-60 hover:opacity-100 hover:text-red-400">
+							<Trash2 className="w-4 h-4" />
+						</Button>
+					</StandardTooltip>
+				</div>
+			)}
+		</div>
+	)
+}
+
+===== chat/SlashCommandItemSimple.tsx =====
+import React from "react"
+
+import type { Command } from "@roo/ExtensionMessage"
+
+interface SlashCommandItemSimpleProps {
+	command: Command
+	onClick?: (command: Command) => void
+}
+
+export const SlashCommandItemSimple: React.FC<SlashCommandItemSimpleProps> = ({ command, onClick }) => {
+	return (
+		<div
+			className="px-4 py-2 text-sm flex items-center hover:bg-vscode-list-hoverBackground cursor-pointer"
+			onClick={() => onClick?.(command)}>
+			{/* Command name */}
+			<div className="flex-1 min-w-0">
+				<div>
+					<span className="truncate text-vscode-foreground">/{command.name}</span>
+					{command.description && (
+						<div className="text-xs text-vscode-descriptionForeground truncate mt-0.5">
+							{command.description}
+						</div>
+					)}
+				</div>
+			</div>
+		</div>
+	)
+}
+
+===== chat/SlashCommandMenu.tsx =====
+import React, { useCallback, useRef, useEffect } from "react"
+import { SlashCommand, getMatchingSlashCommands } from "@/utils/slash-commands"
+import { useExtensionState } from "@/context/ExtensionStateContext" // kilocode_change
+
+interface SlashCommandMenuProps {
+	onSelect: (command: SlashCommand) => void
+	selectedIndex: number
+	setSelectedIndex: (index: number) => void
+	onMouseDown: () => void
+	query: string
+	customModes?: any[]
+}
+
+const SlashCommandMenu: React.FC<SlashCommandMenuProps> = ({
+	onSelect,
+	selectedIndex,
+	setSelectedIndex,
+	onMouseDown,
+	query,
+	customModes,
+}) => {
+	const { localWorkflows, globalWorkflows } = useExtensionState() // kilocode_change
+	const menuRef = useRef<HTMLDivElement>(null)
+
+	const handleClick = useCallback(
+		(command: SlashCommand) => {
+			onSelect(command)
+		},
+		[onSelect],
+	)
+
+	// Auto-scroll logic remains the same...
+	useEffect(() => {
+		if (menuRef.current) {
+			const selectedElement = menuRef.current.children[selectedIndex] as HTMLElement
+			if (selectedElement) {
+				const menuRect = menuRef.current.getBoundingClientRect()
+				const selectedRect = selectedElement.getBoundingClientRect()
+
+				if (selectedRect.bottom > menuRect.bottom) {
+					menuRef.current.scrollTop += selectedRect.bottom - menuRect.bottom
+				} else if (selectedRect.top < menuRect.top) {
+					menuRef.current.scrollTop -= menuRect.top - selectedRect.top
+				}
+			}
+		}
+	}, [selectedIndex])
+
+	// Filter commands based on query
+	const filteredCommands = getMatchingSlashCommands(query, customModes, localWorkflows, globalWorkflows) // kilocode_change
+
+	return (
+		<div
+			className="absolute bottom-[calc(100%-10px)] left-[15px] right-[15px] overflow-x-hidden z-[1000]"
+			onMouseDown={onMouseDown}>
+			<div
+				ref={menuRef}
+				className="bg-[var(--vscode-dropdown-background)] border border-[var(--vscode-editorGroup-border)] rounded-[3px] shadow-[0_4px_10px_rgba(0,0,0,0.25)] flex flex-col max-h-[200px] overflow-y-auto" // Corrected rounded and shadow
+			>
+				{filteredCommands.length > 0 ? (
+					filteredCommands.map((command, index) => (
+						<div
+							key={command.name}
+							className={`py-2 px-3 cursor-pointer flex flex-col border-b border-[var(--vscode-editorGroup-border)] ${
+								// Corrected padding
+								index === selectedIndex
+									? "bg-[var(--vscode-quickInputList-focusBackground)] text-[var(--vscode-quickInputList-focusForeground)]"
+									: "" // Removed bg-transparent
+							} hover:bg-[var(--vscode-list-hoverBackground)]`}
+							onClick={() => handleClick(command)}
+							onMouseEnter={() => setSelectedIndex(index)}>
+							<div className="font-bold whitespace-nowrap overflow-hidden text-ellipsis">
+								/{command.name}
+							</div>
+							<div className="text-[0.85em] text-[var(--vscode-descriptionForeground)] whitespace-normal overflow-hidden text-ellipsis">
+								{command.description}
+							</div>
+						</div>
+					))
+				) : (
+					<div className="py-2 px-3 cursor-default flex flex-col">
+						{" "}
+						{/* Corrected padding, removed border, changed cursor */}
+						<div className="text-[0.85em] text-[var(--vscode-descriptionForeground)]">
+							No matching commands found
+						</div>
+					</div>
+				)}
+			</div>
+		</div>
+	)
+}
+
+export default SlashCommandMenu
+
+===== chat/SmartPatchMessage.tsx =====
+import React, { useState, useEffect } from "react"
+import { usePatcherChat, PatcherEvent } from "../../state/patcherSlice"
+import { VSCodeButton } from "@vscode/webview-ui-toolkit/react"
+
+/**
+ * Interface for SmartPatchMessage component props
+ */
+interface SmartPatchMessageProps {
+	/** ID of message that triggered patcher event */
+	messageId: string
+}
+
+/**
+ * Interface for funny messages data structure
+ */
+interface FunnyMessages {
+	version: number
+	maxPerClass: number
+	messages: Record<string, string[]>
+}
+
+/**
+ * SmartPatchMessage component displays patcher event information in a card format
+ *
+ * This component follows existing message card patterns with:
+ * - Expandable/collapsible details section with chevron
+ * - CPU icon with funny message in header
+ * - Detailed information when expanded
+ * - Action buttons for patcher operations
+ *
+ * @param props - Component props
+ * @param props.messageId - ID of message that triggered patcher event
+ *
+ * @example
+ * ```tsx
+ * <SmartPatchMessage messageId="msg-123" />
+ * ```
+ */
+export const SmartPatchMessage: React.FC<SmartPatchMessageProps> = ({ messageId }) => {
+	const { getEvent } = usePatcherChat()
+	const [isExpanded, setIsExpanded] = useState(false)
+	const [funnyMessage, setFunnyMessage] = useState<string>("")
+	const [event, setEvent] = useState<PatcherEvent | undefined>(undefined)
+
+	// Get patcher event for this message
+	useEffect(() => {
+		const patcherEvent = getEvent(messageId)
+		setEvent(patcherEvent)
+
+		if (patcherEvent) {
+			// Load and select a funny message
+			loadFunnyMessage(patcherEvent.classification)
+		}
+	}, [messageId, getEvent])
+
+	/**
+	 * Load funny messages from JSON file and randomly select one
+	 * for given classification
+	 *
+	 * @param classification - The patcher event classification
+	 */
+	const loadFunnyMessage = async (classification: string) => {
+		try {
+			// Import funny messages JSON
+			const response = await fetch("/.kilocode/patch-plans/funny-messages.json")
+			if (!response.ok) {
+				throw new Error(`Failed to load funny messages: ${response.statusText}`)
+			}
+
+			const data: FunnyMessages = await response.json()
+
+			// Get messages for classification, fallback to "unknown"
+			const messages = data.messages[classification] || data.messages.unknown || []
+
+			if (messages.length > 0) {
+				// Select a random message
+				const randomIndex = Math.floor(Math.random() * messages.length)
+				setFunnyMessage(messages[randomIndex])
+			} else {
+				setFunnyMessage("Smart patcher reporting. 👋")
+			}
+		} catch (error) {
+			console.error("Error loading funny messages:", error)
+			setFunnyMessage("Smart patcher reporting. 👋")
+		}
+	}
+
+	/**
+	 * Toggle expanded state of details section
+	 */
+	const handleToggleExpand = () => {
+		setIsExpanded(!isExpanded)
+	}
+
+	/**
+	 * Send a message to run patcher in dry-run mode
+	 */
+	const handleDryRun = () => {
+		window.postMessage({ type: "patcher:run", mode: "dry" })
+	}
+
+	/**
+	 * Send a message to open the patcher plan
+	 */
+	const handleOpenPlan = () => {
+		window.postMessage({ type: "patcher:openPlan" })
+	}
+
+	// Don't render if no event is found
+	if (!event) {
+		return null
+	}
+
+	return (
+		<div className="mt-2">
+			{/* Header with CPU icon and funny message */}
+			<div
+				className="flex items-center justify-between cursor-pointer select-none p-2 bg-vscode-badge-background border border-vscode-editorGroup-border rounded-xs"
+				onClick={handleToggleExpand}>
+				<div className="flex items-center gap-2">
+					<span className="codicon codicon-server-environment text-vscode-badge-foreground" />
+					<span className="font-medium text-vscode-badge-foreground">{funnyMessage}</span>
+				</div>
+				<span
+					className={`codicon codicon-chevron-${isExpanded ? "up" : "down"} text-vscode-badge-foreground`}
+				/>
+			</div>
+
+			{/* Expanded details section */}
+			{isExpanded && (
+				<div className="mt-1 p-3 bg-vscode-editor-background border-l border-r border-b border-vscode-editorGroup-border rounded-b-xs">
+					<div className="flex f
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== chat/SystemPromptWarning.tsx =====
+import React from "react"
+import { useAppTranslation } from "@/i18n/TranslationContext"
+
+export const SystemPromptWarning: React.FC = () => {
+	const { t } = useAppTranslation()
+
+	return (
+		<div className="flex items-center px-4 py-2 mb-2 text-sm rounded bg-vscode-editorWarning-foreground text-vscode-editor-background">
+			<div className="flex items-center justify-center w-5 h-5 mr-2">
+				<span className="codicon codicon-warning" />
+			</div>
+			<span>{t("chat:systemPromptWarning")}</span>
+		</div>
+	)
+}
+
+export default SystemPromptWarning
+
+===== chat/TaskActions.tsx =====
+import { useState } from "react"
+import { useTranslation } from "react-i18next"
+
+import type { HistoryItem } from "@roo-code/types"
+
+import { vscode } from "@/utils/vscode"
+import { useCopyToClipboard } from "@/utils/clipboard"
+
+import { DeleteTaskDialog } from "../history/DeleteTaskDialog"
+import { IconButton } from "./IconButton"
+// import { ShareButton } from "./ShareButton" // kilocode_change unused
+// import { CloudTaskButton } from "./CloudTaskButton" // kilocode_change: unused
+
+interface TaskActionsProps {
+	item?: HistoryItem
+	buttonsDisabled: boolean
+}
+
+export const TaskActions = ({ item, buttonsDisabled }: TaskActionsProps) => {
+	const [deleteTaskId, setDeleteTaskId] = useState<string | null>(null)
+	const { t } = useTranslation()
+	const { copyWithFeedback, showCopyFeedback } = useCopyToClipboard()
+
+	return (
+		<div className="flex flex-row items-center">
+			<IconButton
+				iconClass="codicon-desktop-download"
+				title={t("chat:task.export")}
+				onClick={() => vscode.postMessage({ type: "exportCurrentTask" })}
+			/>
+			{item?.task && (
+				<IconButton
+					iconClass={showCopyFeedback ? "codicon-check" : "codicon-copy"}
+					title={t("history:copyPrompt")}
+					onClick={(e) => copyWithFeedback(item.task, e)}
+				/>
+			)}
+			{!!item?.size && item.size > 0 && (
+				<>
+					<div className="flex items-center">
+						<IconButton
+							iconClass="codicon-trash"
+							title={t("chat:task.delete")}
+							disabled={buttonsDisabled}
+							onClick={(e) => {
+								e.stopPropagation()
+
+								if (e.shiftKey) {
+									vscode.postMessage({ type: "deleteTaskWithId", text: item.id })
+								} else {
+									setDeleteTaskId(item.id)
+								}
+							}}
+						/>
+					</div>
+					{deleteTaskId && (
+						<DeleteTaskDialog
+							taskId={deleteTaskId}
+							onOpenChange={(open) => !open && setDeleteTaskId(null)}
+							open
+						/>
+					)}
+				</>
+			)}
+			{/* <ShareButton item={item} disabled={false} showLabel={false} /> kilocode_change: unused */}
+			{/* <CloudTaskButton item={item} disabled={buttonsDisabled} />  */}
+		</div>
+	)
+}
+
+===== chat/TaskHeader.tsx =====
+import { memo, useEffect, useRef, useState } from "react"
+import { useTranslation } from "react-i18next"
+import { useCloudUpsell } from "@src/hooks/useCloudUpsell"
+import { CloudUpsellDialog } from "@src/components/cloud/CloudUpsellDialog"
+import DismissibleUpsell from "@src/components/common/DismissibleUpsell"
+import { FoldVertical, ChevronUp, ChevronDown } from "lucide-react"
+import prettyBytes from "pretty-bytes"
+
+import type { ClineMessage } from "@roo-code/types"
+
+import { getModelMaxOutputTokens } from "@roo/api"
+import { findLastIndex } from "@roo/array"
+
+import { formatLargeNumber } from "@src/utils/format"
+import { cn } from "@src/lib/utils"
+import { StandardTooltip } from "@src/components/ui"
+import { useExtensionState } from "@src/context/ExtensionStateContext"
+import { useSelectedModel } from "@/components/ui/hooks/useSelectedModel"
+
+import Thumbnails from "../common/Thumbnails"
+
+import { TaskActions } from "./TaskActions"
+import { ContextWindowProgress } from "./ContextWindowProgress"
+import { Mention } from "./Mention"
+import { TodoListDisplay } from "./TodoListDisplay"
+
+export interface TaskHeaderProps {
+	task: ClineMessage
+	tokensIn: number
+	tokensOut: number
+	cacheWrites?: number
+	cacheReads?: number
+	totalCost: number
+	contextTokens: number
+	buttonsDisabled: boolean
+	handleCondenseContext: (taskId: string) => void
+	todos?: any[]
+}
+
+const TaskHeader = ({
+	task,
+	tokensIn,
+	tokensOut,
+	cacheWrites,
+	cacheReads,
+	totalCost,
+	contextTokens,
+	buttonsDisabled,
+	handleCondenseContext,
+	todos,
+}: TaskHeaderProps) => {
+	const { t } = useTranslation()
+	const { apiConfiguration, currentTaskItem, clineMessages } = useExtensionState()
+	const { id: modelId, info: model } = useSelectedModel(apiConfiguration)
+	const [isTaskExpanded, setIsTaskExpanded] = useState(false)
+	const [showLongRunningTaskMessage, setShowLongRunningTaskMessage] = useState(false)
+	const { isOpen, openUpsell, closeUpsell, handleConnect } = useCloudUpsell({
+		autoOpenOnAuth: false,
+	})
+
+	// Check if the task is complete by looking at the last relevant message (skipping resume messages)
+	const isTaskComplete =
+		clineMessages && clineMessages.length > 0
+			? (() => {
+					const lastRelevantIndex = findLastIndex(
+						clineMessages,
+						(m) => !(m.ask === "resume_task" || m.ask === "resume_completed_task"),
+					)
+					return lastRelevantIndex !== -1
+						? clineMessages[lastRelevantIndex]?.ask === "completion_result"
+						: false
+				})()
+			: false
+
+	useEffect(() => {
+		const timer = setTimeout(() => {
+			if (currentTaskItem && !isTaskComplete) {
+				setShowLongRunningTaskMessage(true)
+			}
+		}, 120_000) // Show upsell after 2 minutes
+
+		return () => clearTimeout(timer)
+	}, [currentTaskItem, isTaskComplete])
+
+	const textContainerRef = useRef<HTMLDivElement>(null)
+	const textRef = useRef<HTMLDivElement>(null)
+	const contextWindow = model?.contextWindow || 1
+
+	const condenseButton = (
+		<StandardTooltip content={t("chat:task.condenseContext")}>
+			<button
+				disabled={buttonsDisabled}
+				onClick={() => currentTaskItem && handleCondenseContext(currentTaskItem.id)}
+				className="shrink-0 min-h-[20px] min-w-[20px] p-[2px] cursor-pointer disabled:cursor-not-allowed opacity-85 hover:opacity-100 bg-transparent border-none rounded-md">
+				<FoldVertical size={16} />
+			</button>
+		</StandardTooltip>
+	)
+
+	const hasTodos = todos && Array.isArray(todos) && todos.length > 0
+
+	return (
+		<div className="pt-2 pb-0 px-3">
+			{showLongRunningTaskMessage && !isTaskComplete && (
+				<DismissibleUpsell
+					upsellId="longRunningTask"
+					onClick={() => openUpsell()}
+					dismissOnClick={false}
+					variant="banner">
+					{t("cloud:upsell.longRunningTask")}
+				</DismissibleUpsell>
+			)}
+			<div
+				className={cn(
+					"px-2.5 pt-2.5 pb-2 flex flex-col gap-1.5 relative z-1 cursor-pointer",
+					"bg-vscode-input-background hover:bg-vscode-input-background/90",
+					"text-vscode-foreground/80 hover:text-vscode-foreground",
+					"shadow-sm shadow-black/30 rounded-md",
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== chat/TaskTimeline.tsx =====
+import type { ClineMessage } from "@roo-code/types"
+import { forwardRef, memo, useCallback, useEffect, useMemo, useRef } from "react"
+import { useDrag } from "@use-gesture/react"
+import { Virtuoso, type VirtuosoHandle } from "react-virtuoso"
+import { useExtensionState } from "../../context/ExtensionStateContext"
+import { getTaskTimelineMessageColor } from "../../utils/messageColors"
+import {
+	calculateTaskTimelineSizes,
+	MAX_HEIGHT_PX as TASK_TIMELINE_MAX_HEIGHT_PX,
+} from "../../utils/timeline/calculateTaskTimelineSizes"
+import { consolidateMessagesForTimeline } from "../../utils/timeline/consolidateMessagesForTimeline"
+import { TooltipProvider } from "../ui/tooltip"
+import { TaskTimelineMessage } from "./TaskTimelineMessage"
+
+// We hide the scrollbars for the TaskTimeline by wrapping it in a container with
+// overflow hidden. This hides the scrollbars for the actual Virtuoso element
+// by clipping them out view. This just needs to be greater than the webview scrollbar width.
+const SCROLLBAR_WIDTH_PX = 25
+
+interface TaskTimelineProps {
+	groupedMessages: (ClineMessage | ClineMessage[])[]
+	onMessageClick?: (index: number) => void
+	isTaskActive?: boolean
+}
+
+// Translates vertical scrolling into horizontal scrolling and supports drag scrolling
+const HorizontalScroller = forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
+	({ style, children, className, ...props }, ref) => {
+		const bind = useDrag(
+			({ active, delta: [dx] }) => {
+				const element = (ref as React.MutableRefObject<HTMLDivElement>).current
+				if (!element) return
+
+				element.scrollLeft -= dx
+
+				if (active) {
+					element.style.cursor = "grabbing"
+					element.style.userSelect = "none"
+				} else {
+					element.style.cursor = "grab"
+					element.style.userSelect = "auto"
+				}
+			},
+			{
+				// Lock to horizontal axis only
+				axis: "x",
+				// Allow preventDefault to work properly
+				eventOptions: { passive: false },
+				// Prevent small drags from interfering with clicks
+				filterTaps: true,
+				// Use pointer events to capture mouse release outside element
+				pointer: { capture: true },
+				// Prevent conflicts with native browser scrolling on touch devices
+				touchAction: "pan-x",
+			},
+		)
+
+		return (
+			<div
+				{...props}
+				{...bind()}
+				ref={ref}
+				className={`overflow-x-auto overflow-y-hidden touch-none cursor-grab ${className || ""}`}
+				style={style}
+				onWheel={(e) => {
+					e.preventDefault()
+					// Handle both vertical and horizontal wheel events
+					;(ref as React.MutableRefObject<HTMLDivElement>).current!.scrollLeft += e.deltaY
+				}}>
+				{children}
+			</div>
+		)
+	},
+)
+
+export const TaskTimeline = memo<TaskTimelineProps>(({ groupedMessages, onMessageClick, isTaskActive = false }) => {
+	const { setHoveringTaskTimeline } = useExtensionState()
+	const virtuosoRef = useRef<VirtuosoHandle>(null)
+	const previousGroupedLengthRef = useRef(groupedMessages.length)
+
+	const handleMouseEnter = useCallback(() => {
+		setHoveringTaskTimeline(true)
+	}, [setHoveringTaskTimeline])
+
+	const handleMouseLeave = useCallback(() => {
+		setHoveringTaskTimeline(false)
+	}, [setHoveringTaskTimeline])
+
+	const timelineMessagesData = useMemo(() => {
+		const { processedMessages, messageToOriginalIndex } = consolidateMessagesForTimeline(groupedMessages)
+		const messageSizeData = calculateTaskTimelineSizes(processedMessages)
+
+		return processedMessages.map((message, filteredIndex) => {
+			const originalIndex = messageToOriginalIndex.get(message) || 0
+			return {
+				index: originalIndex,
+				color: getTaskTimelineMessageColor(message),
+				message,
+				sizeData: messageSizeData[filteredIndex],
+			}
+		})
+	}, [groupedMessages])
+
+	const activeIndex = isTaskActive ? groupedMessages.length - 1 : -1
+
+	const itemContent = useCallback(
+		(index: number) => (
+			<TaskTimelineMessage
+				data={timelineMessagesData[index]}
+				activeIndex={activeIndex}
+				onClick={() => onMessageClick?.(timelineMessagesData[index].index)}
+			/>
+		),
+		[timelineMessagesData, acti
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== chat/TaskTimelineMessage.tsx =====
+import { memo, useEffect, useState } from "react"
+import { useTranslation } from "react-i18next"
+import type { ClineMessage } from "@roo-code/types"
+import { cn } from "@/lib/utils"
+import { getMessageTypeDescription } from "@/utils/messageColors"
+import { MAX_HEIGHT_PX, type MessageSizeData } from "@/utils/timeline/calculateTaskTimelineSizes"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+
+interface TimelineMessageData {
+	index: number
+	color: string
+	message: ClineMessage | ClineMessage[]
+	sizeData: MessageSizeData
+}
+
+interface TaskTimelineMessageProps {
+	data: TimelineMessageData
+	activeIndex: number
+	onClick?: () => void
+}
+
+export const TaskTimelineMessage = memo(({ data, activeIndex, onClick }: TaskTimelineMessageProps) => {
+	const { t } = useTranslation()
+	const messageDescription = getMessageTypeDescription(data.message, t)
+	const tooltip = t("kilocode:taskTimeline.tooltip.clickToScroll", {
+		messageType: messageDescription,
+		messageNumber: data.index + 1,
+	})
+	const isActive = activeIndex === data.index
+
+	const [isNew, setIsNew] = useState(true)
+	useEffect(() => {
+		const newTimer = setTimeout(() => setIsNew(false), 1000)
+		return () => clearTimeout(newTimer)
+	}, [])
+
+	return (
+		<div
+			className="mr-0.5 relative overflow-hidden"
+			style={{ width: `${data.sizeData.width}px`, height: `${MAX_HEIGHT_PX}px` }}>
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<div
+						className={cn(
+							"absolute bottom-0 left-0 right-0 cursor-pointer rounded-t-xs",
+							"transition-all duration-200 hover:opacity-70",
+							isNew && "animate-fade-in",
+							isActive && "animate-slow-pulse-delayed",
+							data.color,
+						)}
+						style={{ height: `${(data.sizeData.height / MAX_HEIGHT_PX) * 100}%` }}
+						onClick={onClick}
+					/>
+				</TooltipTrigger>
+				<TooltipContent>{tooltip}</TooltipContent>
+			</Tooltip>
+		</div>
+	)
+})
+
+TaskTimelineMessage.displayName = "TaskTimelineMessageProps"
+
+===== chat/TodoListDisplay.tsx =====
+import { useState, useRef, useMemo, useEffect } from "react"
+
+export function TodoListDisplay({ todos }: { todos: any[] }) {
+	const [isCollapsed, setIsCollapsed] = useState(true)
+	const ulRef = useRef<HTMLUListElement>(null)
+	const itemRefs = useRef<(HTMLLIElement | null)[]>([])
+	const scrollIndex = useMemo(() => {
+		const inProgressIdx = todos.findIndex((todo: any) => todo.status === "in_progress")
+		if (inProgressIdx !== -1) return inProgressIdx
+		return todos.findIndex((todo: any) => todo.status !== "completed")
+	}, [todos])
+
+	// Find the most important todo to display when collapsed
+	const mostImportantTodo = useMemo(() => {
+		const inProgress = todos.find((todo: any) => todo.status === "in_progress")
+		if (inProgress) return inProgress
+		return todos.find((todo: any) => todo.status !== "completed")
+	}, [todos])
+	useEffect(() => {
+		if (isCollapsed) return
+		if (!ulRef.current) return
+		if (scrollIndex === -1) return
+		const target = itemRefs.current[scrollIndex]
+		if (target && ulRef.current) {
+			const ul = ulRef.current
+			const targetTop = target.offsetTop - ul.offsetTop
+			const targetHeight = target.offsetHeight
+			const ulHeight = ul.clientHeight
+			const scrollTo = targetTop - (ulHeight / 2 - targetHeight / 2)
+			ul.scrollTop = scrollTo
+		}
+	}, [todos, isCollapsed, scrollIndex])
+	if (!Array.isArray(todos) || todos.length === 0) return null
+
+	const totalCount = todos.length
+	const completedCount = todos.filter((todo: any) => todo.status === "completed").length
+
+	const allCompleted = completedCount === totalCount && totalCount > 0
+
+	// Create the status icon for the most important todo
+	const getMostImportantTodoIcon = () => {
+		if (allCompleted) {
+			return (
+				<span
+					style={{
+						display: "inline-block",
+						width: 8,
+						height: 8,
+						borderRadius: "50%",
+						background: "var(--vscode-charts-green)",
+						marginRight: 8,
+						marginLeft: 2,
+						flexShrink: 0,
+					}}
+				/>
+			)
+		}
+
+		if (!mostImportantTodo) {
+			return (
+				<span
+					className="codicon codicon-checklist"
+					style={{
+						color: "var(--vscode-foreground)",
+						marginRight: 8,
+						marginLeft: 2,
+						flexShrink: 0,
+						fontSize: 14,
+					}}
+				/>
+			)
+		}
+
+		if (mostImportantTodo.status === "completed") {
+			return (
+				<span
+					style={{
+						display: "inline-block",
+						width: 8,
+						height: 8,
+						borderRadius: "50%",
+						background: "var(--vscode-charts-green)",
+						marginRight: 8,
+						marginLeft: 2,
+						flexShrink: 0,
+					}}
+				/>
+			)
+		}
+
+		if (mostImportantTodo.status === "in_progress") {
+			return (
+				<span
+					style={{
+						display: "inline-block",
+						width: 8,
+						height: 8,
+						borderRadius: "50%",
+						background: "var(--vscode-charts-yellow)",
+						marginRight: 8,
+						marginLeft: 2,
+						flexShrink: 0,
+					}}
+				/>
+			)
+		}
+
+		// Default not-started todo
+		return (
+			<span
+				style={{
+					display: "inline-block",
+					width: 8,
+					height: 8,
+					borderRadius: "50%",
+					border: "1px solid var(--vscode-descriptionForeground)",
+					background: "transparent",
+					marginRight: 8,
+					marginLeft: 2,
+					flexShrink: 0,
+				}}
+			/>
+		)
+	}
+
+	return (
+		<div
+			className="border border-t-0 rounded-b-xs relative"
+			style={{
+				margin: "0",
+				padding: "6px 10px",
+				background: "var(--vscode-editor-background,transparent)",
+				borderColor: "var(--vscode-panel-border)",
+			}}>
+			<div
+				style={{
+					display: "flex",
+					alignItems: "center",
+					gap: 2,
+					marginBottom: 0,
+					cursor: "pointer",
+					userSelect: "none",
+				}}
+				onClick={() => setIsCollapsed((v) => !v)}>
+				{getMostImportantTodoIcon()}
+				<span
+					style={{
+						fontWeight: 500,
+						color: allCompleted
+							? "var(--vscode-charts-green)"
+							: mostImportantTodo?.status === "in_progress"
+								? "var(--vscode-charts-yellow)"
+								: "var(--vscode-foreground)",
+						flex: 1,
+						overflow: "hidden",
+						textOverflow: "ellipsis",
+						whiteSpace: "nowrap",
+					}}
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== chat/ToolbarSupervisorToggle.tsx =====
+import React from "react"
+import { Zap } from "lucide-react"
+import { useSupervisor } from "../../state/supervisorSlice"
+
+export default function ToolbarSupervisorToggle() {
+	const { enabled, setEnabled } = useSupervisor()
+	return (
+		<button
+			title={enabled ? "Supervisor: ON (Ctrl+Alt+L)" : "Supervisor: OFF (Ctrl+Alt+L)"}
+			onClick={() => setEnabled(!enabled)}
+			className={
+				"px-2 py-1 rounded text-sm flex items-center gap-1 " +
+				(enabled ? "bg-green-600 text-white" : "bg-neutral-700 text-white")
+			}
+			aria-pressed={enabled}
+			data-testid="toolbar-supervisor-toggle">
+			<Zap className="w-3 h-3" />
+			{enabled ? "SV ON" : "SV OFF"}
+		</button>
+	)
+}
+
+===== chat/UpdateTodoListToolBlock.tsx =====
+import React, { useState, useEffect, useRef } from "react"
+import { ToolUseBlock, ToolUseBlockHeader } from "../common/ToolUseBlock"
+import MarkdownBlock from "../common/MarkdownBlock"
+
+interface TodoItem {
+	id?: string
+	content: string
+	status?: "completed" | "in_progress" | string
+}
+
+/**
+ * @description
+ * Editable Todo List component. Each time the todo list changes (edit, add, delete, status switch), the parent component will be notified via the onChange callback.
+ * The parent component should synchronize the latest todos to the model in onChange.
+ */
+interface UpdateTodoListToolBlockProps {
+	todos?: TodoItem[]
+	content?: string
+	/**
+	 * Callback when todos change, be sure to implement and notify the model with the latest todos
+	 * @param todos Latest todo list
+	 */
+	onChange: (todos: TodoItem[]) => void
+	/** Whether editing is allowed (controlled externally) */
+	editable?: boolean
+	userEdited?: boolean
+}
+
+const STATUS_OPTIONS = [
+	{ value: "", label: "Not Started", color: "var(--vscode-foreground)", border: "#bbb", bg: "transparent" },
+	{
+		value: "in_progress",
+		label: "In Progress",
+		color: "var(--vscode-charts-yellow)",
+		border: "var(--vscode-charts-yellow)",
+		bg: "rgba(255, 221, 51, 0.15)",
+	},
+	{
+		value: "completed",
+		label: "Completed",
+		color: "var(--vscode-charts-green)",
+		border: "var(--vscode-charts-green)",
+		bg: "var(--vscode-charts-green)",
+	},
+]
+
+const genId = () => Math.random().toString(36).slice(2, 10)
+
+const UpdateTodoListToolBlock: React.FC<UpdateTodoListToolBlockProps> = ({
+	todos = [],
+	content,
+	onChange,
+	editable = true,
+	userEdited = false,
+}) => {
+	const [editTodos, setEditTodos] = useState<TodoItem[]>(
+		todos.length > 0 ? todos.map((todo) => ({ ...todo, id: todo.id || genId() })) : [],
+	)
+	const [adding, setAdding] = useState(false)
+	const [newContent, setNewContent] = useState("")
+	const newInputRef = useRef<HTMLInputElement>(null)
+	const [deleteId, setDeleteId] = useState<string | null>(null)
+	const [isEditing, setIsEditing] = useState(false)
+
+	// Automatically exit edit mode when external editable becomes false
+	useEffect(() => {
+		if (!editable && isEditing) {
+			setIsEditing(false)
+		}
+	}, [editable, isEditing])
+
+	// Check if onChange is passed
+	useEffect(() => {
+		if (typeof onChange !== "function") {
+			console.warn(
+				"UpdateTodoListToolBlock: onChange callback not passed, cannot notify model after todo changes!",
+			)
+		}
+		// Only check once on mount
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [])
+
+	// Sync when external props.todos changes
+	useEffect(() => {
+		setEditTodos(todos.length > 0 ? todos.map((todo) => ({ ...todo, id: todo.id || genId() })) : [])
+	}, [todos])
+
+	// Auto focus on new item
+	useEffect(() => {
+		if (adding && newInputRef.current) {
+			newInputRef.current.focus()
+		}
+	}, [adding])
+
+	// Edit content
+	const handleContentChange = (id: string, value: string) => {
+		const newTodos = editTodos.map((todo) => (todo.id === id ? { ...todo, content: value } : todo))
+		setEditTodos(newTodos)
+		onChange?.(newTodos)
+	}
+
+	// Change status
+	const handleStatusChange = (id: string, status: string) => {
+		const newTodos = editTodos.map((todo) => (todo.id === id ? { ...todo, status } : todo))
+		setEditTodos(newTodos)
+		onChange?.(newTodos)
+	}
+
+	// Delete (confirmation dialog)
+	const handleDelete = (id: string) => {
+		setDeleteId(id)
+	}
+	const confirmDelete = () => {
+		if (!deleteId) return
+		const newTodos = editTodos.filter((todo) => todo.id !== deleteId)
+		setEditTodos(newTodos)
+		onChange?.(newTodos)
+		setDeleteId(null)
+	}
+	const cancelDelete = () => setDeleteId(null)
+
+	// Add
+	const handleAdd = () => {
+		if (!newContent.trim()) return
+		const newTodo: TodoItem = {
+			id: genId(),
+			content: newContent.trim(),
+			status: "",
+		}
+		const newTodos = [...editTodos, newTodo]
+		setEditTodos(newTodos)
+		onChange?.(newTodos)
+		setNewContent("")
+		setAdding(false)
+	}
+
+	// Add on Enter
+	const handleNewInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) 
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== chat/checkpoints/CheckpointMenu.tsx =====
+import { useState, useCallback } from "react"
+import { CheckIcon, Cross2Icon } from "@radix-ui/react-icons"
+import { useTranslation } from "react-i18next"
+
+import { Button, Popover, PopoverContent, PopoverTrigger, StandardTooltip } from "@/components/ui"
+import { useRooPortal } from "@/components/ui/hooks"
+
+import { vscode } from "@src/utils/vscode"
+import { Checkpoint } from "./schema"
+
+type CheckpointMenuBaseProps = {
+	ts: number
+	commitHash: string
+	currentHash?: string
+	checkpoint: Checkpoint
+}
+type CheckpointMenuControlledProps = {
+	open: boolean
+	onOpenChange: (open: boolean) => void
+}
+type CheckpointMenuUncontrolledProps = {
+	open?: undefined
+	onOpenChange?: undefined
+}
+type CheckpointMenuProps = CheckpointMenuBaseProps & (CheckpointMenuControlledProps | CheckpointMenuUncontrolledProps)
+
+export const CheckpointMenu = ({
+	ts,
+	commitHash,
+	currentHash,
+	checkpoint,
+	open,
+	onOpenChange,
+}: CheckpointMenuProps) => {
+	const { t } = useTranslation()
+	const [internalOpen, setInternalOpen] = useState(false)
+	const [isConfirming, setIsConfirming] = useState(false)
+	const portalContainer = useRooPortal("roo-portal")
+
+	const isCurrent = currentHash === commitHash
+
+	const previousCommitHash = checkpoint?.from
+
+	const isOpen = open ?? internalOpen
+	const setOpen = onOpenChange ?? setInternalOpen
+
+	const onCheckpointDiff = useCallback(() => {
+		vscode.postMessage({
+			type: "checkpointDiff",
+			payload: { ts, previousCommitHash, commitHash, mode: "checkpoint" },
+		})
+	}, [ts, previousCommitHash, commitHash])
+
+	const onPreview = useCallback(() => {
+		vscode.postMessage({ type: "checkpointRestore", payload: { ts, commitHash, mode: "preview" } })
+		setOpen(false)
+	}, [ts, commitHash, setOpen])
+
+	const onRestore = useCallback(() => {
+		vscode.postMessage({ type: "checkpointRestore", payload: { ts, commitHash, mode: "restore" } })
+		setOpen(false)
+	}, [ts, commitHash, setOpen])
+
+	const handleOpenChange = useCallback(
+		(open: boolean) => {
+			setOpen(open)
+			if (!open) {
+				setIsConfirming(false)
+			}
+		},
+		[setOpen],
+	)
+
+	return (
+		<div className="flex flex-row gap-1">
+			<StandardTooltip content={t("chat:checkpoint.menu.viewDiff")}>
+				<Button variant="ghost" size="icon" onClick={onCheckpointDiff}>
+					<span className="codicon codicon-diff-single" />
+				</Button>
+			</StandardTooltip>
+			<Popover open={isOpen} onOpenChange={handleOpenChange}>
+				<StandardTooltip content={t("chat:checkpoint.menu.restore")}>
+					<PopoverTrigger asChild>
+						<Button variant="ghost" size="icon" aria-label={t("chat:checkpoint.menu.restore")}>
+							<span className="codicon codicon-history" />
+						</Button>
+					</PopoverTrigger>
+				</StandardTooltip>
+				<PopoverContent align="end" container={portalContainer}>
+					<div className="flex flex-col gap-2">
+						{!isCurrent && (
+							<div className="flex flex-col gap-1 group hover:text-foreground">
+								<Button variant="secondary" onClick={onPreview} data-testid="restore-files-btn">
+									{t("chat:checkpoint.menu.restoreFiles")}
+								</Button>
+								<div className="text-muted transition-colors group-hover:text-foreground">
+									{t("chat:checkpoint.menu.restoreFilesDescription")}
+								</div>
+							</div>
+						)}
+						{!isCurrent && (
+							<div className="flex flex-col gap-1 group hover:text-foreground">
+								<div className="flex flex-col gap-1 group hover:text-foreground">
+									{!isConfirming ? (
+										<Button
+											variant="secondary"
+											onClick={() => setIsConfirming(true)}
+											data-testid="restore-files-and-task-btn">
+											{t("chat:checkpoint.menu.restoreFilesAndTask")}
+										</Button>
+									) : (
+										<>
+											<Button
+												variant="default"
+												onClick={onRestore}
+												className="grow"
+												data-testid="confirm-restore-btn">
+												<div className="flex flex-row gap-1">
+													<CheckIcon />
+													<div>{t("chat:checkpoint.menu.confirm")}</div>
+												</div>
+							
+…[truncated]
+# note: truncated to stay within per-file budget
+
+===== chat/checkpoints/CheckpointSaved.tsx =====
+import { useMemo, useRef, useState, useEffect } from "react"
+import { useTranslation } from "react-i18next"
+import { cn } from "@/lib/utils"
+
+import { CheckpointMenu } from "./CheckpointMenu"
+import { checkpointSchema } from "./schema"
+import { GitCommitVertical } from "lucide-react"
+
+type CheckpointSavedProps = {
+	ts: number
+	commitHash: string
+	currentHash?: string
+	checkpoint?: Record<string, unknown>
+}
+
+export const CheckpointSaved = ({ checkpoint, ...props }: CheckpointSavedProps) => {
+	const { t } = useTranslation()
+	const isCurrent = props.currentHash === props.commitHash
+	const [isPopoverOpen, setIsPopoverOpen] = useState(false)
+	const [isClosing, setIsClosing] = useState(false)
+	const closeTimer = useRef<number | null>(null)
+
+	useEffect(() => {
+		return () => {
+			if (closeTimer.current) {
+				window.clearTimeout(closeTimer.current)
+				closeTimer.current = null
+			}
+		}
+	}, [])
+
+	const handlePopoverOpenChange = (open: boolean) => {
+		setIsPopoverOpen(open)
+		if (open) {
+			setIsClosing(false)
+			if (closeTimer.current) {
+				window.clearTimeout(closeTimer.current)
+				closeTimer.current = null
+			}
+		} else {
+			setIsClosing(true)
+			closeTimer.current = window.setTimeout(() => {
+				setIsClosing(false)
+				closeTimer.current = null
+			}, 200) // keep menu visible briefly to avoid popover jump
+		}
+	}
+
+	const menuVisible = isPopoverOpen || isClosing
+
+	const metadata = useMemo(() => {
+		if (!checkpoint) {
+			return undefined
+		}
+
+		const result = checkpointSchema.safeParse(checkpoint)
+
+		if (!result.success) {
+			return undefined
+		}
+
+		// kilocode_change start
+		// ifFirst is misscalculated by the ShadowCheckpointService because use the length of the array of checkpoints
+		// insead of the from-to attributes.
+		// ifFirst need to be removed from the checkpointShema and the core pkg and move the logic to the frontend
+		return {
+			...result.data,
+			isFirst: result.data.from === result.data.to,
+		}
+		// kilocode_change end
+	}, [checkpoint])
+
+	if (!metadata) {
+		return null
+	}
+
+	return (
+		<div className="group flex items-center justify-between gap-2 pt-2 pb-3 ">
+			<div className="flex items-center gap-2 text-blue-400 whitespace-nowrap">
+				<GitCommitVertical className="w-4" />
+				<span className="font-semibold">{t("chat:checkpoint.regular")}</span>
+				{isCurrent && <span className="text-muted">({t("chat:checkpoint.current")})</span>}
+			</div>
+			<span
+				className="block w-full h-[2px] mt-[2px] text-xs"
+				style={{
+					backgroundImage:
+						"linear-gradient(90deg, rgba(0, 188, 255, .65), rgba(0, 188, 255, .65) 80%, rgba(0, 188, 255, 0) 99%)",
+				}}></span>
+
+			{/* Keep menu visible while popover is open or briefly after close to prevent jump */}
+			<div
+				data-testid="checkpoint-menu-container"
+				className={cn("h-4 -mt-2", menuVisible ? "block" : "hidden group-hover:block")}>
+				<CheckpointMenu
+					{...props}
+					checkpoint={metadata}
+					open={isPopoverOpen}
+					onOpenChange={handlePopoverOpenChange}
+				/>
+			</div>
+		</div>
+	)
+}
+
+===== chat/checkpoints/schema.ts =====
+import { z } from "zod"
+
+export const checkpointSchema = z.object({
+	from: z.string(),
+	to: z.string(),
+})
+
+export type Checkpoint = z.infer<typeof checkpointSchema>
+
+# --- reached max_total_chars budget; stopping early ---

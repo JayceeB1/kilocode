@@ -4,7 +4,7 @@ import { join } from "path"
 
 const SupervisorConfigSchema = z.object({
 	bind: z.string().default("127.0.0.1"),
-	port: z.number().int().positive().default(43110),
+	port: z.number().int().positive().default(9611),
 	provider: z.enum(["ollama", "lmstudio", "openai"]).default("ollama"),
 	model: z.string().default("llama3.1:8b-instruct-q4"),
 	max_tokens: z.number().int().positive().default(768),

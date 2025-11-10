@@ -184,7 +184,7 @@ The Local Supervisor is designed with security and privacy as primary concerns:
 #### Network Binding
 
 - **Default**: Binds to `127.0.0.1` only
-- **Forbidden**: `0.0.0.0` binding is explicitly blocked
+- **Forbidden**: 0.0.0.0 binding — seule l'IP 127.0.0.1 est acceptée (LAN 10.0.4.0/24 activable explicitement)
 - **Port Range**: Restricted to 9600-9699 (default: 9611)
 - **Firewall**: No external network access required
 
@@ -250,7 +250,7 @@ Create `.kilocode/supervisor.config.json` in your project root:
 ```json
 {
 	"bind": "127.0.0.1",
-	"port": 43110,
+	"port": 9611,
 	"provider": "ollama",
 	"model": "llama3.1:8b-instruct-q4",
 	"max_tokens": 768,

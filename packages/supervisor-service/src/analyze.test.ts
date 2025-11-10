@@ -18,6 +18,23 @@ vi.mock("./config.js", () => ({
 	resetConfig: vi.fn(),
 }))
 
+vi.mock("./llm/index.js", () => ({
+	analyzeWithLLM: vi.fn().mockResolvedValue({
+		issues: [
+			{
+				type: "syntax",
+				severity: "warning",
+				message: "Potential syntax issue detected",
+				line: 1,
+				suggestion: "Check for missing semicolons or brackets",
+				confidence: 0.8,
+			},
+		],
+		suggestions: ["Consider adding type annotations", "Review error handling patterns"],
+		fixedCode: 'console.log("hello world");',
+	}),
+}))
+
 // Mock Express Response
 const mockResponse = () => {
 	const res: Partial<Response> = {}
@@ -80,7 +97,6 @@ describe("analyze", () => {
 				metadata: expect.objectContaining({
 					model: expect.any(String),
 					provider: expect.any(String),
-					tokensUsed: expect.any(Number),
 					processingTime: expect.any(Number),
 				}),
 			}),

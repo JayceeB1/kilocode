@@ -167,13 +167,15 @@ def build_context_for_directory(
     allowed_exts: Set[str],
     allow_hidden: bool,
     encoding: str,
+    display_name: str | None = None,
 ) -> None:
     if not root.exists() or not root.is_dir():
         raise FileNotFoundError(f"Directory not found: {root}")
 
     files = list(iter_files(root, excluded_dirs, allowed_exts, allow_hidden))
     lines: List[str] = []
-    lines.append(f"# Context digest for {root}")
+    label = display_name or str(root)
+    lines.append(f"# Context digest for {label}")
     lines.append(f"# Files considered: {len(files)}")
     if max_file_chars:
         lines.append(f"# Max chars per file: {max_file_chars}")
@@ -198,7 +200,8 @@ def build_context_for_directory(
         total_chars += len(block)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text("".join(lines), encoding="utf-8")
+    output_text = "\n".join(lines).rstrip() + "\n"
+    output_path.write_text(output_text, encoding="utf-8")
 
 
 def main() -> None:
@@ -206,12 +209,14 @@ def main() -> None:
     allowed_exts = {ext.lower() for ext in args.include_ext}
     excluded_dirs = set(args.exclude_dirs)
 
+    cwd = Path.cwd()
     for directory in args.directories:
         output_dir = args.output_dir
         out_filename = f"{directory.name}-context.txt"
         output_path = output_dir / out_filename
+        resolved_root = directory if directory.is_absolute() else (cwd / directory).resolve()
         build_context_for_directory(
-            root=directory,
+            root=resolved_root,
             output_path=output_path,
             max_file_chars=args.max_file_chars,
             max_total_chars=args.max_total_chars,
@@ -219,6 +224,7 @@ def main() -> None:
             allowed_exts=allowed_exts,
             allow_hidden=args.allow_hidden,
             encoding=args.encoding,
+            display_name=str(directory),
         )
         print(f"Wrote {output_path}")
 

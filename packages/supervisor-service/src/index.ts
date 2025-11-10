@@ -3,6 +3,7 @@ import cors from "cors"
 import helmet from "helmet"
 import { loadConfig } from "./config.js"
 import { analyzeCode, healthCheck } from "./analyze.js"
+import { handlePatchRequest, validatePatchMiddleware } from "./routes/patch.js"
 
 async function startServer(): Promise<void> {
 	try {
@@ -26,8 +27,8 @@ async function startServer(): Promise<void> {
 				origin: [
 					"http://localhost:3000",
 					"http://127.0.0.1:3000",
-					"http://localhost:43110",
-					"http://127.0.0.1:43110",
+					"http://localhost:9611",
+					"http://127.0.0.1:9611",
 				],
 				credentials: true,
 			}),
@@ -49,12 +50,14 @@ async function startServer(): Promise<void> {
 
 		app.post("/v1/analyze", analyzeCode)
 
+		app.post("/v1/patch", validatePatchMiddleware, handlePatchRequest)
+
 		// 404 handler
 		app.use("*", (req, res) => {
 			res.status(404).json({
 				error: "Not Found",
 				message: `Route ${req.method} ${req.originalUrl} not found`,
-				availableRoutes: ["GET /health", "POST /v1/analyze"],
+				availableRoutes: ["GET /health", "POST /v1/analyze", "POST /v1/patch"],
 			})
 		})
 
@@ -72,6 +75,7 @@ async function startServer(): Promise<void> {
 			console.log(`🚀 KiloCode Supervisor Service started on http://${config.bind}:${config.port}`)
 			console.log(`📊 Health check: http://${config.bind}:${config.port}/health`)
 			console.log(`🔍 Analysis endpoint: http://${config.bind}:${config.port}/v1/analyze`)
+			console.log(`🔧 Patch endpoint: http://${config.bind}:${config.port}/v1/patch`)
 			console.log(`🧠 Using ${config.provider} with model: ${config.model}`)
 			console.log(`🔒 Security: Localhost only access`)
 		})

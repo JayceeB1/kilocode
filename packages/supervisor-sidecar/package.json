@@ -55,7 +55,7 @@
 				},
 				"kilo-code.supervisor.serviceUrl": {
 					"type": "string",
-					"default": "http://127.0.0.1:43110",
+					"default": "http://127.0.0.1:9611",
 					"description": "URL of the KiloCode Supervisor service"
 				},
 				"kilo-code.supervisor.autoAnalyze": {

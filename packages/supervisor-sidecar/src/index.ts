@@ -16,8 +16,8 @@ export function activate(context: vscode.ExtensionContext) {
 
 	// Initialize services
 	supervisorService = new SupervisorService()
-	terminalCapture = new TerminalCapture(supervisorService, outputChannel)
 	problemMatcher = new ProblemMatcher(outputChannel)
+	terminalCapture = new TerminalCapture(supervisorService, outputChannel, problemMatcher)
 
 	// Register commands
 	const toggleCaptureCommand = vscode.commands.registerCommand("kilo-code.supervisor.toggleCapture", () =>
