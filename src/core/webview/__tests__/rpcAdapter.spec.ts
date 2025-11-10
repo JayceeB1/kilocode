@@ -5,7 +5,7 @@ describe("RPC Adapter Integration", () => {
 	describe("RPC Message Detection and Conversion", () => {
 		test("should correctly identify and convert supervisor:get RPC message", () => {
 			const rpcMessage = {
-				__rpc: true,
+				__rpc: true as const,
 				id: "test-id-123",
 				command: "supervisor:get",
 				payload: { key: "test-config-key" },
@@ -25,7 +25,7 @@ describe("RPC Adapter Integration", () => {
 
 		test("should correctly identify and convert supervisor:set RPC message", () => {
 			const rpcMessage = {
-				__rpc: true,
+				__rpc: true as const,
 				id: "test-id-456",
 				command: "supervisor:set",
 				payload: { key: "test-key", value: "test-value" },
@@ -45,7 +45,7 @@ describe("RPC Adapter Integration", () => {
 
 		test("should correctly identify and convert supervisor:error RPC message", () => {
 			const rpcMessage = {
-				__rpc: true,
+				__rpc: true as const,
 				id: "error-id-789",
 				command: "supervisor:error",
 				payload: { error: "Test error message" },
@@ -65,7 +65,7 @@ describe("RPC Adapter Integration", () => {
 
 		test("should correctly identify and convert supervisor:result RPC message", () => {
 			const rpcMessage = {
-				__rpc: true,
+				__rpc: true as const,
 				id: "result-id-999",
 				command: "supervisor:result",
 				payload: { result: "Test result data" },

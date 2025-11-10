@@ -5,7 +5,7 @@ describe("webviewMessageHandler RPC Adapter", () => {
 	describe("RPC Helper Functions", () => {
 		test("isRpcEnvelope should correctly identify RPC messages", () => {
 			const rpcMessage = {
-				__rpc: true,
+				__rpc: true as const,
 				id: "test-id",
 				command: "supervisor:get",
 				payload: { key: "test-key" },
@@ -25,13 +25,13 @@ describe("webviewMessageHandler RPC Adapter", () => {
 
 		test("isRpcEnvelope should reject invalid RPC messages", () => {
 			const invalidRpcMessage1 = {
-				__rpc: true,
+				__rpc: true as const,
 				id: 123, // Should be string
 				command: "test",
 			}
 
 			const invalidRpcMessage2 = {
-				__rpc: true,
+				__rpc: true as const,
 				id: "test-id",
 				command: 123, // Should be string
 			}
@@ -49,7 +49,7 @@ describe("webviewMessageHandler RPC Adapter", () => {
 
 		test("toTypeMessage should convert RPC envelope to internal format", () => {
 			const rpcMessage = {
-				__rpc: true,
+				__rpc: true as const,
 				id: "test-id",
 				command: "supervisor:get",
 				payload: { key: "test-key" },

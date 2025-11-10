@@ -40,15 +40,9 @@ export function toTypeMessage(rpc: RpcEnvelope) {
 /**
  * Helper function to send RPC response back to the webview
  */
-function rpcReply(panel: vscode.WebviewPanel | vscode.WebviewView, id: string, result?: any, error?: string) {
-	const message = error ? { __rpc: true, id, error } : { __rpc: true, id, result }
-
-	// Handle both WebviewPanel and WebviewView types
-	if ("webview" in panel) {
-		panel.webview.postMessage(message)
-	} else {
-		panel.postMessage(message)
-	}
+function rpcReply(provider: ClineProvider, id: string, result?: any, error?: string) {
+	const message = error ? { __rpc: true as const, id, error } : { __rpc: true as const, id, result }
+	provider.postMessageToWebview(message as any)
 }
 
 import {
@@ -131,11 +125,11 @@ export const webviewMessageHandler = async (
 		const converted = toTypeMessage(message)
 		try {
 			// Route message as if it were a native message.type
-			const result = await handleSupervisorMessage(provider, converted)
+			const result = await handleSupervisorMessage(converted, provider)
 			// Send response back in RPC format
-			rpcReply(provider.view, message.id, result)
+			rpcReply(provider, message.id, result)
 		} catch (e: any) {
-			rpcReply(provider.view, message.id, undefined, e?.message ?? "Unhandled RPC error")
+			rpcReply(provider, message.id, undefined, e?.message ?? "Unhandled RPC error")
 		}
 		return
 	}
