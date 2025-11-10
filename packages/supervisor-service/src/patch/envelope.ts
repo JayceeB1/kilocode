@@ -85,28 +85,25 @@ export const DEFAULT_CONSERVATIVE_ENVELOPE: Omit<TaskEnvelope, "plan"> = {
  */
 export function applySecurityConstraints(
 	envelope: Omit<TaskEnvelope, "plan">,
-	customConstraints?: Partial<TaskScope>
-): TaskEnvelope {
+	customConstraints?: Partial<TaskScope>,
+): Omit<TaskEnvelope, "plan"> {
 	// Start with conservative defaults
 	const hardenedScope: TaskScope = {
 		...DEFAULT_CONSERVATIVE_ENVELOPE.scope,
 		// Apply custom constraints if provided
 		...customConstraints,
 		// Ensure deny paths always include critical system paths
-		denyPaths: [
-			...DEFAULT_CONSERVATIVE_ENVELOPE.scope.denyPaths,
-			...(customConstraints?.denyPaths || []),
-		],
+		denyPaths: [...DEFAULT_CONSERVATIVE_ENVELOPE.scope.denyPaths, ...(customConstraints?.denyPaths || [])],
 		// Ensure operation types are safe
 		allowOps: customConstraints?.allowOps || DEFAULT_CONSERVATIVE_ENVELOPE.scope.allowOps,
 		// Limit retries and time budget for security
 		maxRetries: Math.min(
 			customConstraints?.maxRetries || DEFAULT_CONSERVATIVE_ENVELOPE.scope.maxRetries,
-			5 // Maximum 5 retries
+			5, // Maximum 5 retries
 		),
 		timeBudgetSec: Math.min(
 			customConstraints?.timeBudgetSec || DEFAULT_CONSERVATIVE_ENVELOPE.scope.timeBudgetSec,
-			600 // Maximum 10 minutes
+			600, // Maximum 10 minutes
 		),
 	}
 
@@ -116,13 +113,13 @@ export function applySecurityConstraints(
 	}
 
 	// Ensure allow paths are absolute and normalized
-	hardenedScope.allowPaths = hardenedScope.allowPaths.map(path => {
+	hardenedScope.allowPaths = hardenedScope.allowPaths.map((path) => {
 		const resolved = path.startsWith("/") ? path : process.cwd() + "/" + path
 		return resolved.endsWith("/") ? resolved : resolved + "/"
 	})
 
 	// Ensure deny paths are absolute and normalized
-	hardenedScope.denyPaths = hardenedScope.denyPaths.map(path => {
+	hardenedScope.denyPaths = hardenedScope.denyPaths.map((path) => {
 		const resolved = path.startsWith("/") ? path : process.cwd() + "/" + path
 		return resolved.endsWith("/") ? resolved : resolved + "/"
 	})
@@ -148,7 +145,7 @@ export function applySecurityConstraints(
  */
 export function createConservativeEnvelope(
 	planId: string,
-	customConstraints?: Partial<TaskScope>
+	customConstraints?: Partial<TaskScope>,
 ): Omit<TaskEnvelope, "plan"> {
 	const baseEnvelope = {
 		...DEFAULT_CONSERVATIVE_ENVELOPE,

@@ -30,17 +30,17 @@ export async function analyzeWithOllama(
 	code: string,
 	language?: string,
 	filePath?: string,
-	context?: string
+	context?: string,
 ): Promise<LlmAnalysis> {
 	const config = getConfig()
-	
+
 	try {
 		// Import ollama dynamically to avoid issues when package is not available
 		const { default: ollama } = await import("ollama")
-		
+
 		// Construct the prompt
 		const prompt = buildAnalysisPrompt(code, language, filePath, context)
-		
+
 		// Call Ollama API
 		const response = await ollama.generate({
 			model: config.model,
@@ -50,10 +50,10 @@ export async function analyzeWithOllama(
 				num_predict: config.max_tokens,
 			},
 		})
-		
+
 		// Extract JSON from the response
 		const analysis = extractJsonFromResponse(response.response)
-		
+
 		// Validate and return the analysis
 		return validateAnalysis(analysis)
 	} catch (error) {
@@ -65,16 +65,11 @@ export async function analyzeWithOllama(
 /**
  * Builds a comprehensive analysis prompt for the LLM
  */
-function buildAnalysisPrompt(
-	code: string,
-	language?: string,
-	filePath?: string,
-	context?: string
-): string {
+function buildAnalysisPrompt(code: string, language?: string, filePath?: string, context?: string): string {
 	const languageHint = language ? `The code is written in ${language}.` : ""
 	const filePathHint = filePath ? `File path: ${filePath}.` : ""
 	const contextHint = context ? `Additional context: ${context}.` : ""
-	
+
 	return `You are a code analysis expert. Analyze the following code and provide a structured JSON response.
 
 ${languageHint}
@@ -124,10 +119,10 @@ function extractJsonFromResponse(response: string): any {
 		try {
 			// Try to extract JSON from markdown code blocks
 			const jsonMatch = response.match(/```(?:json)?\s*([\s\S]*?)\s*```/)
-			if (jsonMatch) {
+			if (jsonMatch && typeof jsonMatch[1] === "string") {
 				return JSON.parse(jsonMatch[1])
 			}
-			
+
 			// Try to find JSON object in the response
 			const objectMatch = response.match(/\{[\s\S]*\}/)
 			if (objectMatch) {
@@ -136,7 +131,7 @@ function extractJsonFromResponse(response: string): any {
 		} catch (error) {
 			console.warn("Failed to extract JSON from response:", error)
 		}
-		
+
 		// If all parsing attempts fail, return null
 		return null
 	}
@@ -149,10 +144,10 @@ function validateAnalysis(analysis: any): LlmAnalysis {
 	if (!analysis || typeof analysis !== "object") {
 		return getFallbackAnalysis("")
 	}
-	
+
 	// Ensure issues is an array
 	const issues = Array.isArray(analysis.issues) ? analysis.issues : []
-	
+
 	// Normalize issues
 	const normalizedIssues = issues.map((issue: any) => ({
 		type: typeof issue.type === "string" ? issue.type : "unknown",
@@ -161,19 +156,18 @@ function validateAnalysis(analysis: any): LlmAnalysis {
 		line: typeof issue.line === "number" ? issue.line : undefined,
 		column: typeof issue.column === "number" ? issue.column : undefined,
 		suggestion: typeof issue.suggestion === "string" ? issue.suggestion : undefined,
-		confidence: typeof issue.confidence === "number" && issue.confidence >= 0 && issue.confidence <= 1 
-			? issue.confidence 
-			: 0.5,
+		confidence:
+			typeof issue.confidence === "number" && issue.confidence >= 0 && issue.confidence <= 1
+				? issue.confidence
+				: 0.5,
 	}))
-	
+
 	// Ensure suggestions is an array
 	const suggestions = Array.isArray(analysis.suggestions) ? analysis.suggestions : []
-	
+
 	// Normalize suggestions
-	const normalizedSuggestions = suggestions
-		.filter((s: any) => typeof s === "string")
-		.slice(0, 10) // Limit to 10 suggestions
-	
+	const normalizedSuggestions = suggestions.filter((s: any) => typeof s === "string").slice(0, 10) // Limit to 10 suggestions
+
 	return {
 		issues: normalizedIssues,
 		suggestions: normalizedSuggestions,
@@ -186,7 +180,7 @@ function validateAnalysis(analysis: any): LlmAnalysis {
  */
 function getFallbackAnalysis(code: string): LlmAnalysis {
 	const issues = []
-	
+
 	// Basic syntax checks
 	if (code.includes("TODO") || code.includes("FIXME")) {
 		issues.push({
@@ -197,7 +191,7 @@ function getFallbackAnalysis(code: string): LlmAnalysis {
 			confidence: 0.9,
 		})
 	}
-	
+
 	// Check for common issues
 	if (code.includes("console.log") && !code.includes("test")) {
 		issues.push({
@@ -208,7 +202,7 @@ function getFallbackAnalysis(code: string): LlmAnalysis {
 			confidence: 0.8,
 		})
 	}
-	
+
 	return {
 		issues,
 		suggestions: [

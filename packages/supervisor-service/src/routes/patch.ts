@@ -84,17 +84,19 @@ export async function handlePatchRequest(req: Request, res: Response): Promise<v
 			}
 		}
 
+		const dryRun = patchRequest.dryRun === true
+
 		// Create SmartPatcher instance
 		const patcher = new SmartPatcher()
 
 		// Execute the patch plan
-		const result = await patcher.runPlan(patchRequest.plan, envelope, patchRequest.dryRun)
+		const result = await patcher.runPlan(patchRequest.plan, envelope, dryRun)
 
 		// Prepare response
 		const response: PatchResponse = {
 			result,
 			envelope,
-			dryRun: patchRequest.dryRun,
+			dryRun,
 		}
 
 		// Log execution summary
@@ -106,7 +108,7 @@ export async function handlePatchRequest(req: Request, res: Response): Promise<v
 			successful: result.summary.successful,
 			failed: result.summary.failed,
 			skipped: result.summary.skipped,
-			dryRun: patchRequest.dryRun,
+			dryRun,
 		})
 
 		// Return success response
