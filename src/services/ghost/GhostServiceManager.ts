@@ -6,6 +6,7 @@ import { GhostModel } from "./GhostModel"
 import { GhostStatusBar } from "./GhostStatusBar"
 import { GhostCodeActionProvider } from "./GhostCodeActionProvider"
 import { GhostInlineCompletionProvider } from "./classic-auto-complete/GhostInlineCompletionProvider"
+import { GhostContextProvider } from "./classic-auto-complete/GhostContextProvider"
 //import { NewAutocompleteProvider } from "./new-auto-complete/NewAutocompleteProvider"
 import { GhostServiceSettings, TelemetryEventName } from "@roo-code/types"
 import { ContextProxy } from "../../core/config/ContextProxy"
@@ -16,12 +17,13 @@ import { RooIgnoreController } from "../../core/ignore/RooIgnoreController"
 
 export class GhostServiceManager {
 	private static instance: GhostServiceManager | null = null
-	private documentStore: GhostDocumentStore
-	private model: GhostModel
-	private cline: ClineProvider
-	private context: vscode.ExtensionContext
+	private readonly documentStore: GhostDocumentStore
+	private readonly model: GhostModel
+	private readonly cline: ClineProvider
+	private readonly context: vscode.ExtensionContext
 	private settings: GhostServiceSettings | null = null
-	private ghostContext: GhostContext
+	private readonly ghostContext: GhostContext
+	private readonly ghostContextProvider: GhostContextProvider
 
 	private taskId: string | null = null
 	private isProcessing: boolean = false
@@ -32,8 +34,8 @@ export class GhostServiceManager {
 	private lastCompletionCost: number = 0
 
 	// VSCode Providers
-	public codeActionProvider: GhostCodeActionProvider
-	public inlineCompletionProvider: GhostInlineCompletionProvider
+	public readonly codeActionProvider: GhostCodeActionProvider
+	public readonly inlineCompletionProvider: GhostInlineCompletionProvider
 	//private newAutocompleteProvider: NewAutocompleteProvider | null = null
 	private inlineCompletionProviderDisposable: vscode.Disposable | null = null
 
@@ -47,6 +49,7 @@ export class GhostServiceManager {
 		this.documentStore = new GhostDocumentStore()
 		this.model = new GhostModel()
 		this.ghostContext = new GhostContext(this.documentStore)
+		this.ghostContextProvider = new GhostContextProvider(context, this.model)
 
 		// Register the providers
 		this.codeActionProvider = new GhostCodeActionProvider()
@@ -55,6 +58,7 @@ export class GhostServiceManager {
 			this.updateCostTracking.bind(this),
 			this.ghostContext,
 			() => this.settings,
+			this.ghostContextProvider,
 		)
 
 		// Register document event handlers
@@ -432,6 +436,8 @@ export class GhostServiceManager {
 			this.inlineCompletionProviderDisposable = null
 		}
 
+		// Dispose inline completion provider resources
+		this.inlineCompletionProvider.dispose()
 		// Dispose new autocomplete provider if it exists
 		//if (this.newAutocompleteProvider) {
 		//	this.newAutocompleteProvider.dispose()
