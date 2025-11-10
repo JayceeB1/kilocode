@@ -1,5 +1,5 @@
 # Context digest for packages/supervisor-service
-# Files considered: 35
+# Files considered: 39
 # Max chars per file: 4000
 # Max chars per digest: 160000
 
@@ -104,8 +104,8 @@ import { defineConfig } from "tsup"
 
 export default defineConfig({
 	entry: ["src/index.ts"],
-	format: ["esm"],
-	dts: { only: true },
+	format: ["esm", "cjs"],
+	dts: true,
 	clean: true,
 	sourcemap: true,
 })
@@ -676,12 +676,70 @@ function parseCidr(entry: string): CidrRange | null {
 
 
 ===== src/index.ts =====
-import express from "express"
+import express, { type Express } from "express"
 import cors from "cors"
 import helmet from "helmet"
 import { loadConfig } from "./config.js"
 import { analyzeCode, healthCheck } from "./analyze.js"
 import { handlePatchRequest, validatePatchMiddleware } from "./routes/patch.js"
+
+export function createServerApp(config = loadConfig()): Express {
+	const app = express()
+
+	// Security middleware
+	app.use(
+		helmet({
+			contentSecurityPolicy: false, // Allow for API usage
+			crossOriginEmbedderPolicy: false,
+		}),
+	)
+
+	// Conditional CORS configuration
+	const localhostOnly = !config.allowLAN
+	const origins = localhostOnly
+		? [/^http:\/\/localhost(:\d+)?$/, /^http:\/\/127\.0\.0\.1(:\d+)?$/]
+		: [/^http:\/\/localhost(:\d+)?$/, /^http:\/\/127\.0\.0\.1(:\d+)?$/, /^http:\/\/10\.0\.4\.\d{1,3}(:\d+)?$/]
+
+	app.use(cors({ origin: origins, credentials: true }))
+
+	// Body parsing middleware
+	app.use(express.json({ limit: "10mb" }))
+	app.use(express.urlencoded({ extended: true, limit: "10mb" }))
+
+	// Request logging middleware
+	app.use((req, res, next) => {
+		const timestamp = new Date().toISOString()
+		console.log(`[${timestamp}] ${req.method} ${req.path} - ${req.ip}`)
+		next()
+	})
+
+	// Routes
+	app.get("/health", healthCheck)
+
+	app.post("/v1/analyze", analyzeCode)
+
+	app.post("/v1/patch", validatePatchMiddleware, handlePatchRequest)
+
+	// 404 handler
+	app.use("*", (req, res) => {
+		res.status(404).json({
+			error: "Not Found",
+			message: `Route ${req.method} ${req.originalUrl} not found`,
+			availableRoutes: ["GET /health", "POST /v1/analyze", "POST /v1/patch"],
+		})
+	})
+
+	// Global error handler
+	app.use((err: Error, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+		console.error("Unhandled error:", err)
+		res.status(500).json({
+			error: "Internal Server Error",
+			message: process.env.NODE_ENV === "development" ? err.message : "Something went wrong",
+		})
+	})
+
+	return app
+}
 
 async function startServer(): Promise<void> {
 	try {
@@ -689,64 +747,7 @@ async function startServer(): Promise<void> {
 		const config = loadConfig()
 
 		// Create Express app
-		const app = express()
-
-		// Security middleware
-		app.use(
-			helmet({
-				contentSecurityPolicy: false, // Allow for API usage
-				crossOriginEmbedderPolicy: false,
-			}),
-		)
-
-		// CORS configuration - localhost only for security
-		app.use(
-			cors({
-				origin: [
-					"http://localhost:3000",
-					"http://127.0.0.1:3000",
-					"http://localhost:9611",
-					"http://127.0.0.1:9611",
-				],
-				credentials: true,
-			}),
-		)
-
-		// Body parsing middleware
-		app.use(express.json({ limit: "10mb" }))
-		app.use(express.urlencoded({ extended: true, limit: "10mb" }))
-
-		// Request logging middleware
-		app.use((req, res, next) => {
-			const timestamp = new Date().toISOString()
-			console.log(`[${timestamp}] ${req.method} ${req.path} - ${req.ip}`)
-			next()
-		})
-
-		// Routes
-		app.get("/health", healthCheck)
-
-		app.post("/v1/analyze", analyzeCode)
-
-		app.post("/v1/patch", validatePatchMiddleware, handlePatchRequest)
-
-		// 404 handler
-		app.use("*", (req, res) => {
-			res.status(404).json({
-				error: "Not Found",
-				message: `Route ${req.method} ${req.originalUrl} not found`,
-				availableRoutes: ["GET /health", "POST /v1/analyze", "POST /v1/patch"],
-			})
-		})
-
-		// Global error handler
-		app.use((err: Error, req: express.Request, res: express.Response, _next: express.NextFunction) => {
-			console.error("Unhandled error:", err)
-			res.status(500).json({
-				error: "Internal Server Error",
-				message: process.env.NODE_ENV === "development" ? err.message : "Something went wrong",
-			})
-		})
+		const app = createServerApp(config)
 
 		// Start server
 		const server = app.listen(config.port, config.bind, () => {
@@ -755,7 +756,13 @@ async function startServer(): Promise<void> {
 			console.log(`🔍 Analysis endpoint: http://${config.bind}:${config.port}/v1/analyze`)
 			console.log(`🔧 Patch endpoint: http://${config.bind}:${config.port}/v1/patch`)
 			console.log(`🧠 Using ${config.provider} with model: ${config.model}`)
-			console.log(`🔒 Security: Localhost only access`)
+			
+			// Correct logging based on LAN configuration
+			if (config.allowLAN) {
+				console.log(`🔓 Security: LAN access enabled on ${config.bind}:${config.port} (CIDR allowed: ${config.allowedLANs?.join(", ") || "none"})`)
+			} else {
+				console.log("🔒 Security: Localhost-only access")
+			}
 		})
 
 		// Graceful shutdown
@@ -784,7 +791,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 }
 
 export { startServer }
-
 
 ===== src/patcher.test.ts =====
 /**
@@ -1721,10 +1727,15 @@ export interface TaskResult {
  * Provides a unified interface for different LLM providers
  */
 
-export { analyzeWithOllama, type LlmAnalysis } from "./ollamaClient.js"
+export { analyzeWithOllama, chatWithOllama, type LlmAnalysis } from "./ollamaClient.js"
+export { chatWithLlamaCpp } from "./llamacppClient.js"
+export type { ChatInput, ChatOutput, ChatMessage } from "./types.js"
 
 import { getConfig } from "../config.js"
-import { analyzeWithOllama, type LlmAnalysis } from "./ollamaClient.js"
+import { analyzeWithOllama, chatWithOllama, type LlmAnalysis } from "./ollamaClient.js"
+import { chatWithLlamaCpp } from "./llamacppClient.js"
+import type { ChatInput, ChatOutput } from "./types.js"
+import { redact } from "../utils/redact.js"
 
 /**
  * Analyzes code using the configured LLM provider
@@ -1738,25 +1749,88 @@ export async function analyzeWithLLM(
 	code: string,
 	language?: string,
 	filePath?: string,
-	context?: string
+	context?: string,
 ): Promise<LlmAnalysis> {
 	const config = getConfig()
-	
+
 	switch (config.provider) {
 		case "ollama":
 			return analyzeWithOllama(code, language, filePath, context)
 		case "llama.cpp":
-			console.warn("llama.cpp provider not yet implemented, falling back to Ollama")
+			// For llama.cpp, we need to convert the analysis to use the chat interface
+			// This is a simplified implementation - in a full implementation, we'd
+			// need to adapt the analysis prompt for llama.cpp specifically
+			console.warn("llama.cpp provider analysis not yet fully implemented, falling back to Ollama")
 			return analyzeWithOllama(code, language, filePath, context)
 		default:
 			throw new Error(`Unsupported LLM provider: ${config.provider}`)
 	}
 }
 
+/**
+ * Chat with the configured LLM provider
+ * @param input - Chat input with messages and parameters
+ * @returns Promise resolving to chat output
+ */
+export async function chat(input: ChatInput): Promise<ChatOutput> {
+	const cfg = getConfig()
+	const provider = cfg.provider || "ollama"
+	try {
+		if (provider === "llama.cpp") {
+			return await chatWithLlamaCpp(input)
+		}
+		return await chatWithOllama(input)
+	} catch (e: any) {
+		// Log without secrets
+		console.error(`[llm] ${provider} error:`, redact(e?.message || String(e)))
+		throw e
+	}
+}
+
+===== src/llm/llamacppClient.ts =====
+import type { ChatInput, ChatOutput } from "./types.js"
+import { getConfig } from "../config.js"
+import { redact } from "../utils/redact.js"
+
+/**
+ * Chat with llama.cpp using OpenAI-compatible API
+ * @param input - Chat input with messages and parameters
+ * @returns Promise resolving to chat output
+ */
+export async function chatWithLlamaCpp(input: ChatInput): Promise<ChatOutput> {
+	const cfg = getConfig()
+	// ex: http://127.0.0.1:8080  (with /v1 in suffix optional)
+	const base = (cfg.endpoint || "http://127.0.0.1:8080").replace(/\/+$/, "")
+	const url = `${base}/v1/chat/completions`
+
+	const body = {
+		model: input.model || "llama",
+		messages: input.messages, // [{role, content}]
+		temperature: input.temperature ?? 0.2,
+		max_tokens: input.max_tokens ?? 768,
+		stream: false
+	}
+
+	const resp = await fetch(url, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(body),
+	})
+	if (!resp.ok) {
+		const text = await resp.text().catch(() => "")
+		throw new Error(`llama.cpp HTTP ${resp.status} – ${redact(text)}`)
+	}
+	const json = await resp.json() as any
+	// OpenAI compat → { choices: [{ message: { content } }] }
+	const text = json?.choices?.[0]?.message?.content ?? ""
+	return { text }
+}
 
 ===== src/llm/ollamaClient.ts =====
 import { getConfig } from "../config.js"
 import type { AnalyzeResponse } from "../analyze.js"
+import type { ChatInput, ChatOutput } from "./types.js"
+import { redact } from "../utils/redact.js"
 
 /**
  * LLM analysis interface
@@ -1776,7 +1850,42 @@ export interface LlmAnalysis {
 }
 
 /**
- * Analyzes code using Ollama locally
+ * Chat with Ollama using HTTP API
+ * @param input - Chat input with messages and parameters
+ * @returns Promise resolving to chat output
+ */
+export async function chatWithOllama(input: ChatInput): Promise<ChatOutput> {
+	const cfg = getConfig()
+	const endpoint = (cfg.endpoint || "http://127.0.0.1:11434").replace(/\/+$/, "")
+	const url = `${endpoint}/api/chat`
+
+	const body = {
+		model: input.model || "qwen2.5-coder:latest",
+		messages: input.messages, // [{role, content}]
+		stream: false,
+		options: { 
+			temperature: input.temperature ?? 0.2,
+			num_predict: input.max_tokens ?? 768
+		}
+	}
+
+	const resp = await fetch(url, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(body),
+	})
+	if (!resp.ok) {
+		const text = await resp.text().catch(() => "")
+		throw new Error(`Ollama HTTP ${resp.status} – ${redact(text)}`)
+	}
+	const json = await resp.json() as any
+	// Ollama /api/chat → { message: { content: string } }
+	const text = json?.message?.content ?? ""
+	return { text }
+}
+
+/**
+ * Analyzes code using Ollama locally via HTTP API
  * @param code - The code to analyze
  * @param language - Optional programming language hint
  * @param filePath - Optional file path for context
@@ -1787,30 +1896,31 @@ export async function analyzeWithOllama(
 	code: string,
 	language?: string,
 	filePath?: string,
-	context?: string
+	context?: string,
 ): Promise<LlmAnalysis> {
 	const config = getConfig()
-	
+
 	try {
-		// Import ollama dynamically to avoid issues when package is not available
-		const { default: ollama } = await import("ollama")
-		
 		// Construct the prompt
 		const prompt = buildAnalysisPrompt(code, language, filePath, context)
-		
-		// Call Ollama API
-		const response = await ollama.generate({
+
+		// Prepare messages for chat API
+		const messages: ChatInput["messages"] = [
+			{ role: "system", content: "You are a code analysis expert. Analyze code and provide structured JSON responses." },
+			{ role: "user", content: prompt }
+		]
+
+		// Call Ollama HTTP API
+		const response = await chatWithOllama({
+			messages,
 			model: config.model,
-			prompt,
-			options: {
-				temperature: config.temperature,
-				num_predict: config.max_tokens,
-			},
+			temperature: config.temperature,
+			max_tokens: config.max_tokens,
 		})
-		
+
 		// Extract JSON from the response
-		const analysis = extractJsonFromResponse(response.response)
-		
+		const analysis = extractJsonFromResponse(response.text)
+
 		// Validate and return the analysis
 		return validateAnalysis(analysis)
 	} catch (error) {
@@ -1822,16 +1932,11 @@ export async function analyzeWithOllama(
 /**
  * Builds a comprehensive analysis prompt for the LLM
  */
-function buildAnalysisPrompt(
-	code: string,
-	language?: string,
-	filePath?: string,
-	context?: string
-): string {
+function buildAnalysisPrompt(code: string, language?: string, filePath?: string, context?: string): string {
 	const languageHint = language ? `The code is written in ${language}.` : ""
 	const filePathHint = filePath ? `File path: ${filePath}.` : ""
 	const contextHint = context ? `Additional context: ${context}.` : ""
-	
+
 	return `You are a code analysis expert. Analyze the following code and provide a structured JSON response.
 
 ${languageHint}
@@ -1867,56 +1972,42 @@ Focus on:
 4. Performance concerns
 5. Best practices violations
 
-Return only the JSON object, no additional text.`
-}
-
-/**
- * Extracts JSON from LLM response with fallback parsing
- */
-function extractJsonFromResponse(response: string): any {
-	try {
-		// Try to parse the entire response as JSON
-		return JSON.parse(response)
-	} catch {
-		try {
-			// Try to extract JSON from markdown code blocks
-			const jsonMatch = response.match(/```(?:json)?\s*([\s\S]*?)\s*```/)
-			if (jsonMatch) {
-				return JSON.parse(jsonMatch[1])
-			}
-			
-			// Try to find JSON object in the response
-			const objectMatch = response.match(/\{[\s\S]*\}/)
-			if (objectMatch) {
-				return JSON.parse(objectMatch[0])
-			}
-		} catch (error) {
-			console.warn("Failed to extract JSON from response:", error)
-		}
-		
-		// If all parsing attempts fail, return null
-		return null
-	}
-}
-
-/**
- * Validates and normalizes the analysis object
- */
-function validateAnalysis(analysis: any): LlmAnalysis {
-	if (!analysis || typeof analysis !== "object") {
-		return getFallbackAnalysis("")
-	}
-	
-	// Ensure issues is an array
-	const issues = Array.isArray(analysis.issues) ? analysis.issues : []
-	
-	// Normalize issues
-	const normalizedIssues = issues.map((issue: any) => ({
-		type: typeof issue.type === "string" ? issue.type : "unknown",
-		severity: ["error", "warning"
+Return only the JSON object, no additional text
 …[truncated]
 # note: truncated to stay within per-file budget
 
+
+===== src/llm/types.ts =====
+/**
+ * Chat message interface for LLM providers
+ */
+export interface ChatMessage {
+	role: "system" | "user" | "assistant"
+	content: string
+}
+
+/**
+ * Input interface for chat completion
+ */
+export interface ChatInput {
+	messages: ChatMessage[]
+	model?: string
+	temperature?: number
+	max_tokens?: number
+	stream?: boolean
+}
+
+/**
+ * Output interface for chat completion
+ */
+export interface ChatOutput {
+	text: string
+	usage?: {
+		prompt_tokens?: number
+		completion_tokens?: number
+		total_tokens?: number
+	}
+}
 
 ===== src/patch/SmartPatcher.ts =====
 /**
@@ -2548,28 +2639,25 @@ export const DEFAULT_CONSERVATIVE_ENVELOPE: Omit<TaskEnvelope, "plan"> = {
  */
 export function applySecurityConstraints(
 	envelope: Omit<TaskEnvelope, "plan">,
-	customConstraints?: Partial<TaskScope>
-): TaskEnvelope {
+	customConstraints?: Partial<TaskScope>,
+): Omit<TaskEnvelope, "plan"> {
 	// Start with conservative defaults
 	const hardenedScope: TaskScope = {
 		...DEFAULT_CONSERVATIVE_ENVELOPE.scope,
 		// Apply custom constraints if provided
 		...customConstraints,
 		// Ensure deny paths always include critical system paths
-		denyPaths: [
-			...DEFAULT_CONSERVATIVE_ENVELOPE.scope.denyPaths,
-			...(customConstraints?.denyPaths || []),
-		],
+		denyPaths: [...DEFAULT_CONSERVATIVE_ENVELOPE.scope.denyPaths, ...(customConstraints?.denyPaths || [])],
 		// Ensure operation types are safe
 		allowOps: customConstraints?.allowOps || DEFAULT_CONSERVATIVE_ENVELOPE.scope.allowOps,
 		// Limit retries and time budget for security
 		maxRetries: Math.min(
 			customConstraints?.maxRetries || DEFAULT_CONSERVATIVE_ENVELOPE.scope.maxRetries,
-			5 // Maximum 5 retries
+			5, // Maximum 5 retries
 		),
 		timeBudgetSec: Math.min(
 			customConstraints?.timeBudgetSec || DEFAULT_CONSERVATIVE_ENVELOPE.scope.timeBudgetSec,
-			600 // Maximum 10 minutes
+			600, // Maximum 10 minutes
 		),
 	}
 
@@ -2579,13 +2667,13 @@ export function applySecurityConstraints(
 	}
 
 	// Ensure allow paths are absolute and normalized
-	hardenedScope.allowPaths = hardenedScope.allowPaths.map(path => {
+	hardenedScope.allowPaths = hardenedScope.allowPaths.map((path) => {
 		const resolved = path.startsWith("/") ? path : process.cwd() + "/" + path
 		return resolved.endsWith("/") ? resolved : resolved + "/"
 	})
 
 	// Ensure deny paths are absolute and normalized
-	hardenedScope.denyPaths = hardenedScope.denyPaths.map(path => {
+	hardenedScope.denyPaths = hardenedScope.denyPaths.map((path) => {
 		const resolved = path.startsWith("/") ? path : process.cwd() + "/" + path
 		return resolved.endsWith("/") ? resolved : resolved + "/"
 	})
@@ -2606,7 +2694,7 @@ export function applySecurityConstraints(
 /**
  * Creates a conservative envelope for a specific patch plan
  * @param planId - The ID of the patch plan
- * @param custom
+ * @pa
 …[truncated]
 # note: truncated to stay within per-file budget
 
@@ -3808,7 +3896,7 @@ export async function handlePatchRequest(req: Request, res: Response): Promise<v
 
 	try {
 		const rawBody = (req as any)?.body ?? {}
-		
+
 		// Validate request body
 		if (!rawBody.plan || typeof rawBody.plan !== "object") {
 			res.status(400).json({
@@ -3849,17 +3937,19 @@ export async function handlePatchRequest(req: Request, res: Response): Promise<v
 			}
 		}
 
+		const dryRun = patchRequest.dryRun === true
+
 		// Create SmartPatcher instance
 		const patcher = new SmartPatcher()
 
 		// Execute the patch plan
-		const result = await patcher.runPlan(patchRequest.plan, envelope, patchRequest.dryRun)
+		const result = await patcher.runPlan(patchRequest.plan, envelope, dryRun)
 
 		// Prepare response
 		const response: PatchResponse = {
 			result,
 			envelope,
-			dryRun: patchRequest.dryRun,
+			dryRun,
 		}
 
 		// Log execution summary
@@ -3871,7 +3961,7 @@ export async function handlePatchRequest(req: Request, res: Response): Promise<v
 			successful: result.summary.successful,
 			failed: result.summary.failed,
 			skipped: result.summary.skipped,
-			dryRun: patchRequest.dryRun,
+			dryRun,
 		})
 
 		// Return success response
@@ -3909,7 +3999,7 @@ export function validatePatchPlan(plan: PatchPlan): boolean {
 
 	// Validate each operation
 	for (const op of plan.ops) {
-		if (!op.id || typeof o
+		if (!op.id || typeof op.id !== "
 …[truncated]
 # note: truncated to stay within per-file budget
 
@@ -3938,3 +4028,153 @@ export function buildSafeErrorDetails(error: unknown): SafeErrorDetails {
 		}
 	}
 }
+
+
+===== src/utils/redact.ts =====
+import { getConfig } from "../config.js"
+
+/**
+ * Redacts sensitive information from text based on configuration
+ * @param text - The text to redact
+ * @returns Redacted text or original text if redaction is disabled
+ */
+export function redact(text: string): string {
+	try {
+		const { redactLog } = getConfig()
+		if (!redactLog) {
+			return text
+		}
+		
+		// Redact common sensitive patterns
+		return text
+			// API keys and tokens
+			.replace(/([a-zA-Z0-9_-]{20,})/g, "[REDACTED]")
+			// URLs with potential sensitive data
+			.replace(/(https?:\/\/[^\s]+)/g, "[URL_REDACTED]")
+			// Email addresses
+			.replace(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g, "[EMAIL_REDACTED]")
+			// IP addresses
+			.replace(/\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b/g, "[IP_REDACTED]")
+	} catch {
+		// If config is not available, return original text
+		return text
+	}
+}
+
+===== src/__tests__/integration.e2e.test.ts =====
+import request from "supertest"
+import { createServerApp } from "../index.js"
+import { z } from "zod"
+
+describe("supervisor-service integration", () => {
+	const cfg = {
+		bind: "127.0.0.1",
+		port: 9611,
+		allowLAN: false,
+		allowedLANs: ["10.0.4.0/24"],
+		provider: "ollama",
+		endpoint: "http://127.0.0.1:11434",
+		autoLaunch: false,
+		redactLog: true,
+		model: "llama3.1:8b-instruct-q4",
+		max_tokens: 768,
+		temperature: 0.2,
+		autoFixWhitelist: ["path_not_found", "missing_dep", "flaky_test_rerun"],
+		autoFixMinConfidence: 0.75,
+		reflexion: {
+			enabled: true,
+			maxItems: 128,
+			ttlDays: 60,
+		},
+	}
+	const app = createServerApp(cfg as any)
+
+	it("GET /health → 200", async () => {
+		const res = await request(app).get("/health")
+		expect(res.status).toBe(200)
+		expect(res.body?.status || res.text).toBeTruthy()
+	})
+
+	it("POST /v1/analyze without code → 400", async () => {
+		const res = await request(app).post("/v1/analyze").send({})
+		expect([400, 422]).toContain(res.status)
+	})
+
+	it("POST /v1/analyze with code → 200", async () => {
+		const res = await request(app).post("/v1/analyze").send({ code: "const a=1" })
+		expect(res.status).toBe(200)
+		expect(res.body).toHaveProperty("analysis")
+		expect(res.body.analysis).toHaveProperty("issues")
+		expect(res.body.analysis).toHaveProperty("suggestions")
+		expect(Array.isArray(res.body.analysis.issues)).toBe(true)
+		expect(Array.isArray(res.body.analysis.suggestions)).toBe(true)
+	})
+
+	it("POST /v1/patch without required fields → 400", async () => {
+		const res = await request(app).post("/v1/patch").send({})
+		expect([400, 422]).toContain(res.status)
+	})
+
+	it("POST /v1/patch with valid data → 200", async () => {
+		const patchData = {
+			plan: {
+				id: "test-patch-1",
+				ops: [
+					{
+						id: "op-1",
+						type: "search_replace",
+						filePath: "/test/file.js",
+						search: "const a = 1;",
+						replace: "const a = 2;"
+					}
+				]
+			},
+			dryRun: true
+		}
+		const res = await request(app).post("/v1/patch").send(patchData)
+		expect(res.status).toBe(200)
+		expect(res.body).toHaveProperty("result")
+		expect(res.body).toHaveProperty("envelope")
+		expect(res.body).toHaveProperty("dryRun", true)
+	})
+
+	it("CORS headers are present", async () => {
+		const res = await request(app).get("/health").set("Origin", "http://localhost:3000")
+		expect(res.headers).toHaveProperty("access-control-allow-origin")
+	})
+
+	it("Invalid route returns 404", async () => {
+		const res = await request(app).get("/invalid-route")
+		expect(res.status).toBe(404)
+		expect(res.body).toHaveProperty("error", "Not Found")
+		expect(res.body).toHaveProperty("availableRoutes")
+	})
+
+	it("Request logging middleware works", async () => {
+		// This test verifies that the logging middleware doesn't break requests
+		const res = await request(app).get("/health")
+		expect(res.status).toBe(200)
+	})
+
+	it("CORS with localhost origins", async () => {
+		const origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+		for (const origin of origins) {
+			const res = await request(app).get("/health").set("Origin", origin)
+			expect(res.headers).toHaveProperty("access-control-allow-origin")
+		}
+	})
+
+	it("CORS rejects non-localhost origins when allowLAN is false", async () => {
+		const res = await request(app).get("/health").set("Origin", "http://evil.com")
+		// CORS should not allow this origin
+		expect(res.headers["access-control-allow-origin"]).not.toBe("http://evil.com")
+	})
+
+	it("CORS allows LAN origins when allowLAN is true", async () => {
+		const lanCfg = { ...cfg, allowLAN: true }
+		const lanApp = createServerApp(lanCfg as any)
+		
+		const res = await request(lanApp).get("/health").set("Origin", "http://10.0.4.100:3000")
+		expect(res.headers).toHaveProperty("access-control-allow-origin")
+	})
+})

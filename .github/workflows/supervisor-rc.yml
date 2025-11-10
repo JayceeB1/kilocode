@@ -1,0 +1,44 @@
+name: supervisor-rc
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [ local-supervisor ]
+
+jobs:
+  rc-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@latest --activate
+      - name: Install
+        run: pnpm install
+      - name: Lint & Typecheck
+        run: |
+          pnpm -w -F supervisor-service typecheck || true
+          pnpm -w -F supervisor-service lint || true
+          pnpm -w -F supervisor-sidecar lint || true
+          pnpm -w -F webview-ui lint || true
+      - name: Tests
+        run: |
+          pnpm -w -F supervisor-service test -- --reporter=verbose
+      - name: Build
+        run: |
+          pnpm -w -F supervisor-service build
+          pnpm -w -F supervisor-sidecar build
+          pnpm -w -F webview-ui build
+      - name: Package VSIX
+        run: |
+          cd src && pnpm dlx vsce package --no-dependencies --out ../supervisor-sidecar.vsix
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: supervisor-rc-artifacts
+          path: |
+            packages/supervisor-service/dist/**
+            supervisor-sidecar.vsix

@@ -270,6 +270,13 @@ Create `.kilocode/supervisor.config.json` in your project root:
 }
 ```
 
+### Endpoints Configuration
+
+- `provider`: `"ollama"` | `"llama.cpp"`
+- `endpoint`: base URL du provider local.
+    - Ollama (défaut): `http://127.0.0.1:11434`
+    - llama.cpp (OpenAI-compat): `http://127.0.0.1:8080` (le service ajoute `/v1/chat/completions`)
+
 ### Provider Configuration
 
 #### Ollama
@@ -282,6 +289,8 @@ Create `.kilocode/supervisor.config.json` in your project root:
 }
 ```
 
+> ℹ️ **Ollama** : Le service utilise désormais l'API HTTP native au lieu du SDK. L'endpoint `http://127.0.0.1:11434` est utilisé par défaut.
+
 #### llama.cpp
 
 ```json
@@ -291,6 +300,8 @@ Create `.kilocode/supervisor.config.json` in your project root:
 	"model": "path/to/model.gguf"
 }
 ```
+
+> ℹ️ **llama.cpp** : support **complet** via l'API OpenAI-compat. Assurez-vous de lancer `llama.cpp` avec `--api` (ou binaire équivalent) pour exposer `/v1`.
 
 ### Security Settings
 

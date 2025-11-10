@@ -32,7 +32,62 @@ import { MdmService } from "./services/mdm/MdmService"
 import { migrateSettings } from "./utils/migrateSettings"
 import { checkAndRunAutoLaunchingTask as checkAndRunAutoLaunchingTask } from "./utils/autoLaunchingTask"
 import { autoImportSettings } from "./utils/autoImportSettings"
+import { startSupervisorService, stopSupervisorService } from "./core/supervisor"
 import { API } from "./extension/api"
+
+// Import supervisor config helper from webviewMessageHandler
+async function readSupervisorConfig() {
+	const root = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath
+	if (!root) throw new Error("No workspace open")
+	const file = require("path").join(root, ".kilocode", "supervisor.config.json")
+	try {
+		const raw = await require("fs/promises").readFile(file, "utf8")
+		const cfg = JSON.parse(raw)
+		return validateSupervisorConfig(cfg)
+	} catch {
+		// Default configuration if file doesn't exist
+		return validateSupervisorConfig({
+			version: 1,
+			enabled: false,
+			autoLaunch: false,
+			bind: "127.0.0.1",
+			port: 9611,
+			provider: "ollama",
+			endpoint: "http://127.0.0.1:11434",
+			model: "llama3.1:8b-instruct-q4",
+			max_tokens: 768,
+			temperature: 0.2,
+			allowLAN: false,
+			allowedLANs: ["10.0.4.0/24"],
+			redactLog: true,
+		})
+	}
+}
+
+function validateSupervisorConfig(cfg: any) {
+	const bind = cfg.bind ?? "127.0.0.1"
+	const allowLAN = !!cfg.allowLAN
+	const allowedLANs = Array.isArray(cfg.allowedLANs) ? cfg.allowedLANs : []
+
+	if (bind === "0.0.0.0") throw new Error("0.0.0.0 is forbidden")
+	if (typeof cfg.port !== "number" || cfg.port < 9600 || cfg.port > 9699)
+		throw new Error("Port must be between 9600 and 9699")
+
+	if (!allowLAN && !isLoopbackHost(bind)) {
+		throw new Error("Binding outside 127.0.0.1 requires allowLAN=true")
+	}
+
+	if (allowLAN && allowedLANs.length === 0) {
+		throw new Error("allowLAN=true requires at least one entry in allowedLANs")
+	}
+
+	return cfg
+}
+
+function isLoopbackHost(host: string): boolean {
+	const LOOPBACK_HOSTS = ["127.0.0.1", "::1", "localhost"]
+	return LOOPBACK_HOSTS.includes(host)
+}
 
 import {
 	handleUri,
@@ -401,12 +456,44 @@ export async function activate(context: vscode.ExtensionContext) {
 
 	await checkAndRunAutoLaunchingTask(context) // kilocode_change
 
+	// Auto-launch supervisor service if enabled
+	try {
+		const supervisorConfig = await readSupervisorConfig()
+		if (supervisorConfig.enabled && supervisorConfig.autoLaunch) {
+			// Entry point built by the supervisor-service package
+			const serviceEntry = vscode.Uri.joinPath(
+				context.extensionUri,
+				"..",
+				"..",
+				"packages",
+				"supervisor-service",
+				"dist",
+				"index.js",
+			)
+			const bindAddress = supervisorConfig.allowLAN ? supervisorConfig.bind : "127.0.0.1"
+			startSupervisorService(serviceEntry.fsPath, bindAddress, supervisorConfig.port)
+			outputChannel.appendLine(
+				`[supervisor] Auto-launched supervisor service on ${bindAddress}:${supervisorConfig.port}`,
+			)
+		}
+	} catch (e) {
+		outputChannel.appendLine(`[supervisor] Auto-launch failed: ${e instanceof Error ? e.message : String(e)}`)
+	}
+
 	return new API(outputChannel, provider, socketPath, enableLogging)
 }
 
 // This method is called when your extension is deactivated.
 export async function deactivate() {
 	outputChannel.appendLine(`${Package.name} extension deactivated`)
+
+	// Stop supervisor service if it was auto-launched
+	try {
+		stopSupervisorService()
+		outputChannel.appendLine("[supervisor] Stopped supervisor service")
+	} catch (e) {
+		outputChannel.appendLine(`[supervisor] Error stopping service: ${e instanceof Error ? e.message : String(e)}`)
+	}
 
 	if (cloudService && CloudService.hasInstance()) {
 		try {

@@ -334,7 +334,7 @@ export interface ExtensionMessage {
 
 
 ===== src/core/webview/webviewMessageHandler.ts (supervisor excerpts) =====
-// Lines 96-176
+// Lines 88-168
 import { searchWorkspaceFiles } from "../../services/search/file-search"
 import { fileExistsAtPath } from "../../utils/fs"
 import { playTts, setTtsEnabled, setTtsSpeed, stopTts } from "../../utils/tts"
@@ -375,11 +375,11 @@ export const webviewMessageHandler = async (
 		const converted = toTypeMessage(message)
 		try {
 			// Route message as if it were a native message.type
-			const result = await handleSupervisorMessage(provider, converted)
+			const result = await handleSupervisorMessage(converted, provider)
 			// Send response back in RPC format
-			rpcReply(provider.view, message.id, result)
+			rpcReply(provider, message.id, result)
 		} catch (e: any) {
-			rpcReply(provider.view, message.id, undefined, e?.message ?? "Unhandled RPC error")
+			rpcReply(provider, message.id, undefined, e?.message ?? "Unhandled RPC error")
 		}
 		return
 	}
@@ -417,7 +417,7 @@ export const webviewMessageHandler = async (
 
 	/**
 
-// Lines 3904-3984
+// Lines 3896-3976
 				const { id, text, images } = message.payload as EditQueuedMessagePayload
 				provider.getCurrentTask()?.messageQueueService.updateMessage(id, text, images)
 			}
@@ -500,22 +500,22 @@ export const webviewMessageHandler = async (
 		case "supervisor:error": {
 			try {
 
-// Lines 3985-3986
+// Lines 3977-3978
 				if (!message.payload) {
 					throw new Error("No payload provided for supervisor:error")
 
-// Lines 3987-3988
+// Lines 3979-3980
 				}
 				await handleSupervisorError(message.payload, provider)
 
-// Lines 3989-3993
+// Lines 3981-3985
 			} catch (error) {
 				provider.log(
 					`Error handling supervisor error: ${error instanceof Error ? error.message : String(error)}`,
 				)
 			}
 
-// Lines 3994-3996
+// Lines 3986-3988
 			break
 		}
 		case "supervisor:result": {

@@ -1,5 +1,7 @@
 import { getConfig } from "../config.js"
 import type { AnalyzeResponse } from "../analyze.js"
+import type { ChatInput, ChatOutput } from "./types.js"
+import { redact } from "../utils/redact.js"
 
 /**
  * LLM analysis interface
@@ -19,7 +21,42 @@ export interface LlmAnalysis {
 }
 
 /**
- * Analyzes code using Ollama locally
+ * Chat with Ollama using HTTP API
+ * @param input - Chat input with messages and parameters
+ * @returns Promise resolving to chat output
+ */
+export async function chatWithOllama(input: ChatInput): Promise<ChatOutput> {
+	const cfg = getConfig()
+	const endpoint = (cfg.endpoint || "http://127.0.0.1:11434").replace(/\/+$/, "")
+	const url = `${endpoint}/api/chat`
+
+	const body = {
+		model: input.model || "qwen2.5-coder:latest",
+		messages: input.messages, // [{role, content}]
+		stream: false,
+		options: {
+			temperature: input.temperature ?? 0.2,
+			num_predict: input.max_tokens ?? 768,
+		},
+	}
+
+	const resp = await fetch(url, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(body),
+	})
+	if (!resp.ok) {
+		const text = await resp.text().catch(() => "")
+		throw new Error(`Ollama HTTP ${resp.status} – ${redact(text)}`)
+	}
+	const json = (await resp.json()) as any
+	// Ollama /api/chat → { message: { content: string } }
+	const text = json?.message?.content ?? ""
+	return { text }
+}
+
+/**
+ * Analyzes code using Ollama locally via HTTP API
  * @param code - The code to analyze
  * @param language - Optional programming language hint
  * @param filePath - Optional file path for context
@@ -35,24 +72,28 @@ export async function analyzeWithOllama(
 	const config = getConfig()
 
 	try {
-		// Import ollama dynamically to avoid issues when package is not available
-		const { default: ollama } = await import("ollama")
-
 		// Construct the prompt
 		const prompt = buildAnalysisPrompt(code, language, filePath, context)
 
-		// Call Ollama API
-		const response = await ollama.generate({
-			model: config.model,
-			prompt,
-			options: {
-				temperature: config.temperature,
-				num_predict: config.max_tokens,
+		// Prepare messages for chat API
+		const messages: ChatInput["messages"] = [
+			{
+				role: "system",
+				content: "You are a code analysis expert. Analyze code and provide structured JSON responses.",
 			},
+			{ role: "user", content: prompt },
+		]
+
+		// Call Ollama HTTP API
+		const response = await chatWithOllama({
+			messages,
+			model: config.model,
+			temperature: config.temperature,
+			max_tokens: config.max_tokens,
 		})
 
 		// Extract JSON from the response
-		const analysis = extractJsonFromResponse(response.response)
+		const analysis = extractJsonFromResponse(response.text)
 
 		// Validate and return the analysis
 		return validateAnalysis(analysis)
