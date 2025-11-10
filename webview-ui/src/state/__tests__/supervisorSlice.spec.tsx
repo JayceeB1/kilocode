@@ -3,13 +3,14 @@ import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { vi } from "vitest"
 import { SupervisorProvider, useSupervisor } from "../supervisorSlice"
+import { sendWithCompat } from "../../utils/vscode"
 
 // Mock vscode utility
 vi.mock("../../utils/vscode", () => ({
-	invoke: vi.fn(),
+	sendWithCompat: vi.fn(),
 }))
 
-const mockInvoke = vi.mocked(vi.fn())
+const mockSendWithCompat = vi.mocked(sendWithCompat)
 
 // Test component to access the context
 function TestComponent() {
@@ -41,7 +42,7 @@ describe("supervisorSlice", () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks()
-		mockInvoke.mockResolvedValue(defaultConfig)
+		mockSendWithCompat.mockResolvedValue(defaultConfig)
 	})
 
 	it("provides default enabled state as false", () => {
@@ -96,6 +97,10 @@ describe("supervisorSlice", () => {
 				<TestComponent />
 			</SupervisorProvider>,
 		)
+
+		await waitFor(() => {
+			expect(mockSendWithCompat).toHaveBeenCalled()
+		})
 
 		// Initial state should be false
 		expect(screen.getByTestId("enabled-state")).toHaveTextContent("false")
@@ -173,7 +178,7 @@ describe("supervisorSlice", () => {
 	})
 
 	it("handles errors when loading configuration", async () => {
-		mockInvoke.mockRejectedValue(new Error("Failed to load config"))
+		mockSendWithCompat.mockRejectedValue(new Error("Failed to load config"))
 
 		render(
 			<SupervisorProvider>

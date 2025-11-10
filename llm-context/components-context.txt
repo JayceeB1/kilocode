@@ -6,11 +6,16 @@
 ===== webview-ui/src/components/settings/LocalSupervisor.tsx =====
 import React, { useEffect, useState } from "react"
 import { Cpu } from "lucide-react"
-import { invoke } from "../../utils/vscode"
+import { sendWithCompat } from "../../utils/vscode"
 import type { SupervisorConfig } from "../../state/supervisorSlice"
 import { SectionHeader } from "./SectionHeader"
 
-const DEFAULTS: Partial<SupervisorConfig> = { bind: "127.0.0.1", port: 9611 }
+const DEFAULTS: Partial<SupervisorConfig> = {
+	bind: "127.0.0.1",
+	port: 9611,
+	allowLAN: false,
+	allowedLANs: ["10.0.4.0/24"],
+}
 
 export default function LocalSupervisorSettings() {
 	const [cfg, setCfg] = useState<SupervisorConfig | null>(null)
@@ -21,7 +26,7 @@ export default function LocalSupervisorSettings() {
 	useEffect(() => {
 		;(async () => {
 			try {
-				const c = await invoke<SupervisorConfig>("supervisor:get")
+				const c = (await sendWithCompat("supervisor:get")) as SupervisorConfig
 				setCfg({ ...DEFAULTS, ...c } as SupervisorConfig)
 			} catch (e: any) {
 				setError(e?.message ?? "Unable to load config")
@@ -37,7 +42,10 @@ export default function LocalSupervisorSettings() {
 			// validation UI simple
 			if (cfg.bind === "0.0.0.0") throw new Error("0.0.0.0 est interdit")
 			if (cfg.port < 9600 || cfg.port > 9699) throw new Error("Le port doit être entre 9600 et 9699")
-			const next = await invoke<SupervisorConfig>("supervisor:set", cfg)
+			if (cfg.allowLAN && (!cfg.allowedLANs || cfg.allowedLANs.length === 0)) {
+				throw new Error("Ajoutez au moins un réseau autorisé lorsque Allow LAN est activé")
+			}
+			const next = (await sendWithCompat("supervisor:set", cfg)) as SupervisorConfig
 			setCfg(next)
 		} catch (e: any) {
 			setError(e?.message ?? "Save failed")
@@ -48,7 +56,7 @@ export default function LocalSupervisorSettings() {
 
 	async function reset() {
 		try {
-			const fresh = await invoke<SupervisorConfig>("supervisor:get")
+			const fresh = (await sendWithCompat("supervisor:get")) as SupervisorConfig
 			setCfg({ ...DEFAULTS, ...fresh } as SupervisorConfig)
 			setError(null)
 		} catch (e: any) {
@@ -122,17 +130,7 @@ export default function LocalSupervisorSettings() {
 				<div>
 					<div className="text-sm font-medium">Max tokens</div>
 					<input
-						type="number"
-						value={cfg.max_tokens}
-						onChange={(e) => set("max_tokens", Number(e.target.value))}
-						className="w-full"
-					/>
-				</div>
-				<div>
-					<div className="text-sm font-medium">Temperature</div>
-					<input
-						type="number"
-						step="0.05"
+						type="
 …[truncated]
 
 # note: truncated to stay within per-file budget
@@ -142,7 +140,7 @@ export default function LocalSupervisorSettings() {
 import { describe, it, expect, beforeEach, vi } from "vitest"
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { invoke, vscode } from "../../../utils/vscode"
+import { sendWithCompat, vscode } from "../../../utils/vscode"
 import LocalSupervisorSettings from "../LocalSupervisor"
 import type { SupervisorConfig } from "../../../state/supervisorSlice"
 
@@ -153,7 +151,7 @@ vi.mock("../../../utils/vscode", () => ({
 		getState: vi.fn(),
 		setState: vi.fn(),
 	},
-	invoke: vi.fn(),
+	sendWithCompat: vi.fn(),
 }))
 
 // Default supervisor config for testing
@@ -174,13 +172,13 @@ const defaultConfig: SupervisorConfig = {
 }
 
 describe("LocalSupervisorSettings", () => {
-	const mockInvoke = vi.mocked(invoke)
+	const mockSendWithCompat = vi.mocked(sendWithCompat)
 	const mockPostMessage = vi.mocked(vscode.postMessage)
 
 	beforeEach(() => {
 		vi.clearAllMocks()
 		// Default mock implementation for successful operations
-		mockInvoke.mockResolvedValue(defaultConfig)
+		mockSendWithCompat.mockResolvedValue(defaultConfig)
 		mockPostMessage.mockImplementation(() => {})
 	})
 
@@ -220,7 +218,7 @@ describe("LocalSupervisorSettings", () => {
 
 		// Check that supervisor:set was called with enabled: true
 		await waitFor(() => {
-			expect(mockInvoke).toHaveBeenCalledWith(
+			expect(mockSendWithCompat).toHaveBeenCalledWith(
 				"supervisor:set",
 				expect.objectContaining({
 					enabled: true,
@@ -238,8 +236,8 @@ describe("LocalSupervisorSettings", () => {
 			expect(screen.getByDisplayValue("9611")).toBeInTheDocument()
 		})
 
-		// Mock invoke to reject for invalid port
-		mockInvoke.mockImplementation((command) => {
+		// Mock sendWithCompat to reject for invalid port
+		mockSendWithCompat.mockImplementation((command) => {
 			if (command === "supervisor:get") {
 				return Promise.resolve(defaultConfig)
 			}
@@ -269,10 +267,7 @@ describe("LocalSupervisorSettings", () => {
 	})
 
 	it("displays error message when save fails", async () => {
-		const user = userEvent.setup()
-		const errorMessage = "Save failed"
-
-		// Mock the invoke f
+		const user = userEvent.setu
 …[truncated]
 
 # note: truncated to stay within per-file budget

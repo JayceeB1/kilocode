@@ -125,22 +125,20 @@ export class SmartPatcher {
 	 */
 	private isPathAllowed(filePath: string, envelope: TaskEnvelope): boolean {
 		const { allowPaths, denyPaths } = envelope.scope
+		const resolvedPath = path.resolve(filePath)
 
-		// Check deny paths first
 		for (const denyPath of denyPaths) {
-			if (filePath.startsWith(denyPath)) {
+			if (resolvedPath.startsWith(denyPath)) {
 				return false
 			}
 		}
 
-		// If no allow paths specified, allow all paths
 		if (allowPaths.length === 0) {
 			return true
 		}
 
-		// Check allow paths
 		for (const allowPath of allowPaths) {
-			if (filePath.startsWith(allowPath)) {
+			if (resolvedPath.startsWith(allowPath)) {
 				return true
 			}
 		}

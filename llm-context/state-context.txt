@@ -5,7 +5,7 @@
 
 ===== webview-ui/src/state/supervisorSlice.ts =====
 import React, { createContext, useContext, useEffect, useState } from "react"
-import { invoke } from "../utils/vscode"
+import { sendWithCompat } from "../utils/vscode"
 
 export type SupervisorConfig = {
 	version: 1
@@ -37,7 +37,7 @@ export const SupervisorProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 	useEffect(() => {
 		;(async () => {
 			try {
-				const cfg = await invoke<SupervisorConfig>("supervisor:get")
+				const cfg = await sendWithCompat("supervisor:get")
 				if (cfg && typeof cfg.enabled === "boolean") setEnabled(!!cfg.enabled)
 			} catch {
 				// Ignore errors
@@ -67,13 +67,14 @@ import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { vi } from "vitest"
 import { SupervisorProvider, useSupervisor } from "../supervisorSlice"
+import { sendWithCompat } from "../../utils/vscode"
 
 // Mock vscode utility
 vi.mock("../../utils/vscode", () => ({
-	invoke: vi.fn(),
+	sendWithCompat: vi.fn(),
 }))
 
-const mockInvoke = vi.mocked(vi.fn())
+const mockSendWithCompat = vi.mocked(sendWithCompat)
 
 // Test component to access the context
 function TestComponent() {
@@ -105,7 +106,7 @@ describe("supervisorSlice", () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks()
-		mockInvoke.mockResolvedValue(defaultConfig)
+		mockSendWithCompat.mockResolvedValue(defaultConfig)
 	})
 
 	it("provides default enabled state as false", () => {
@@ -160,6 +161,10 @@ describe("supervisorSlice", () => {
 				<TestComponent />
 			</SupervisorProvider>,
 		)
+
+		await waitFor(() => {
+			expect(mockSendWithCompat).toHaveBeenCalled()
+		})
 
 		// Initial state should be false
 		expect(screen.getByTestId("enabled-state")).toHaveTextContent("false")
@@ -222,12 +227,7 @@ describe("supervisorSlice", () => {
 		window.dispatchEvent(altLEvent)
 
 		// State should remain false
-		expect(screen.getByTestId("enabled-state")).toHaveTextContent("false")
-
-		// Simulate Ctrl+Alt+K (different key)
-		const ctrlAltKEvent = new KeyboardEvent("keydown", {
-			key: "k",
-			ct
+		expect(screen.getByTestI
 …[truncated]
 
 # note: truncated to stay within per-file budget

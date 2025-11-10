@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest"
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { invoke, vscode } from "../../../utils/vscode"
+import { sendWithCompat, vscode } from "../../../utils/vscode"
 import LocalSupervisorSettings from "../LocalSupervisor"
 import type { SupervisorConfig } from "../../../state/supervisorSlice"
 
@@ -12,7 +12,7 @@ vi.mock("../../../utils/vscode", () => ({
 		getState: vi.fn(),
 		setState: vi.fn(),
 	},
-	invoke: vi.fn(),
+	sendWithCompat: vi.fn(),
 }))
 
 // Default supervisor config for testing
@@ -33,13 +33,13 @@ const defaultConfig: SupervisorConfig = {
 }
 
 describe("LocalSupervisorSettings", () => {
-	const mockInvoke = vi.mocked(invoke)
+	const mockSendWithCompat = vi.mocked(sendWithCompat)
 	const mockPostMessage = vi.mocked(vscode.postMessage)
 
 	beforeEach(() => {
 		vi.clearAllMocks()
 		// Default mock implementation for successful operations
-		mockInvoke.mockResolvedValue(defaultConfig)
+		mockSendWithCompat.mockResolvedValue(defaultConfig)
 		mockPostMessage.mockImplementation(() => {})
 	})
 
@@ -79,7 +79,7 @@ describe("LocalSupervisorSettings", () => {
 
 		// Check that supervisor:set was called with enabled: true
 		await waitFor(() => {
-			expect(mockInvoke).toHaveBeenCalledWith(
+			expect(mockSendWithCompat).toHaveBeenCalledWith(
 				"supervisor:set",
 				expect.objectContaining({
 					enabled: true,
@@ -97,8 +97,8 @@ describe("LocalSupervisorSettings", () => {
 			expect(screen.getByDisplayValue("9611")).toBeInTheDocument()
 		})
 
-		// Mock invoke to reject for invalid port
-		mockInvoke.mockImplementation((command) => {
+		// Mock sendWithCompat to reject for invalid port
+		mockSendWithCompat.mockImplementation((command) => {
 			if (command === "supervisor:get") {
 				return Promise.resolve(defaultConfig)
 			}
@@ -131,8 +131,8 @@ describe("LocalSupervisorSettings", () => {
 		const user = userEvent.setup()
 		const errorMessage = "Save failed"
 
-		// Mock the invoke function to reject for supervisor:set
-		mockInvoke.mockImplementation((command) => {
+		// Mock the helper to reject for supervisor:set
+		mockSendWithCompat.mockImplementation((command) => {
 			if (command === "supervisor:get") {
 				return Promise.resolve(defaultConfig)
 			}

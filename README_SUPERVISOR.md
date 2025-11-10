@@ -251,25 +251,21 @@ Create `.kilocode/supervisor.config.json` in your project root:
 {
 	"bind": "127.0.0.1",
 	"port": 9611,
+	"allowLAN": false,
+	"allowedLANs": ["10.0.4.0/24"],
 	"provider": "ollama",
+	"endpoint": "http://127.0.0.1:11434",
 	"model": "llama3.1:8b-instruct-q4",
 	"max_tokens": 768,
 	"temperature": 0.2,
+	"autoLaunch": false,
+	"redactLog": true,
 	"autoFixWhitelist": ["path_not_found", "missing_dep", "flaky_test_rerun"],
 	"autoFixMinConfidence": 0.75,
 	"reflexion": {
 		"enabled": true,
 		"maxItems": 128,
 		"ttlDays": 60
-	},
-	"security": {
-		"allowLan": false,
-		"requireAuthentication": false,
-		"maxRequestSize": "10MB"
-	},
-	"logging": {
-		"level": "info",
-		"file": ".kilocode/.logs/supervisor.log"
 	}
 }
 ```
@@ -281,7 +277,7 @@ Create `.kilocode/supervisor.config.json` in your project root:
 ```json
 {
 	"provider": "ollama",
-	"baseUrl": "http://127.0.0.1:11434",
+	"endpoint": "http://127.0.0.1:11434",
 	"model": "llama3.1:8b-instruct-q4"
 }
 ```
@@ -290,8 +286,8 @@ Create `.kilocode/supervisor.config.json` in your project root:
 
 ```json
 {
-	"provider": "llamacpp",
-	"baseUrl": "http://127.0.0.1:8080",
+	"provider": "llama.cpp",
+	"endpoint": "http://127.0.0.1:8080",
 	"model": "path/to/model.gguf"
 }
 ```
@@ -300,13 +296,9 @@ Create `.kilocode/supervisor.config.json` in your project root:
 
 ```json
 {
-	"security": {
-		"allowLan": false,
-		"requireAuthentication": false,
-		"maxRequestSize": "10MB",
-		"allowedPaths": ["/workspace"],
-		"blockedPaths": ["/etc", "/usr", "~/.ssh"]
-	}
+	"allowLAN": false,
+	"allowedLANs": ["10.0.4.0/24"],
+	"redactLog": true
 }
 ```
 

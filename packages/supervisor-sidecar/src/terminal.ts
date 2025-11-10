@@ -27,7 +27,7 @@ export class TerminalCapture implements vscode.Disposable {
 	private loadConfig(): TerminalCaptureConfig {
 		const config = vscode.workspace.getConfiguration("kilo-code.supervisor")
 		return {
-			enabled: config.get<boolean>("enabled", true),
+			enabled: config.get<boolean>("enabled", false),
 			captureCommands: config.get<string[]>("captureCommands", [
 				"npm test",
 				"pnpm test",
@@ -83,7 +83,7 @@ export class TerminalCapture implements vscode.Disposable {
 		// const dataDisposable = terminal.onDidWriteData((data) => {
 		//   this.captureTerminalData(terminalName, data);
 		// });
-		
+
 		// Implement capture with onDidWriteTerminalData if strategy is "insiders"
 		const dataDisposable = new vscode.Disposable(() => {})
 		if (process.env.VSCODE_INSIDERS === "1") {
@@ -103,22 +103,22 @@ export class TerminalCapture implements vscode.Disposable {
 					type: "command_failed",
 					severity: "error" as const,
 					message: `Command failed with exit code ${e.exitCode}`,
-					suggestion: "Check the terminal output for more details"
+					suggestion: "Check the terminal output for more details",
 				}
-				
+
 				// Create a minimal analysis result to pass to problemMatcher
 				const analysisResult = {
 					analysis: {
 						issues: [issue],
-						suggestions: []
+						suggestions: [],
 					},
 					metadata: {
 						model: "terminal-capture",
 						provider: "vscode",
-						processingTime: 0
-					}
+						processingTime: 0,
+					},
 				}
-				
+
 				this.problemMatcher.processAnalysisResult(analysisResult)
 			}
 		})

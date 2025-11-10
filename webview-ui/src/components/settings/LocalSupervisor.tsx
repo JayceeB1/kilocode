@@ -1,10 +1,15 @@
 import React, { useEffect, useState } from "react"
 import { Cpu } from "lucide-react"
-import { invoke } from "../../utils/vscode"
+import { sendWithCompat } from "../../utils/vscode"
 import type { SupervisorConfig } from "../../state/supervisorSlice"
 import { SectionHeader } from "./SectionHeader"
 
-const DEFAULTS: Partial<SupervisorConfig> = { bind: "127.0.0.1", port: 9611 }
+const DEFAULTS: Partial<SupervisorConfig> = {
+	bind: "127.0.0.1",
+	port: 9611,
+	allowLAN: false,
+	allowedLANs: ["10.0.4.0/24"],
+}
 
 export default function LocalSupervisorSettings() {
 	const [cfg, setCfg] = useState<SupervisorConfig | null>(null)
@@ -15,7 +20,7 @@ export default function LocalSupervisorSettings() {
 	useEffect(() => {
 		;(async () => {
 			try {
-				const c = await invoke<SupervisorConfig>("supervisor:get")
+				const c = (await sendWithCompat("supervisor:get")) as SupervisorConfig
 				setCfg({ ...DEFAULTS, ...c } as SupervisorConfig)
 			} catch (e: any) {
 				setError(e?.message ?? "Unable to load config")
@@ -31,7 +36,10 @@ export default function LocalSupervisorSettings() {
 			// validation UI simple
 			if (cfg.bind === "0.0.0.0") throw new Error("0.0.0.0 est interdit")
 			if (cfg.port < 9600 || cfg.port > 9699) throw new Error("Le port doit être entre 9600 et 9699")
-			const next = await invoke<SupervisorConfig>("supervisor:set", cfg)
+			if (cfg.allowLAN && (!cfg.allowedLANs || cfg.allowedLANs.length === 0)) {
+				throw new Error("Ajoutez au moins un réseau autorisé lorsque Allow LAN est activé")
+			}
+			const next = (await sendWithCompat("supervisor:set", cfg)) as SupervisorConfig
 			setCfg(next)
 		} catch (e: any) {
 			setError(e?.message ?? "Save failed")
@@ -42,7 +50,7 @@ export default function LocalSupervisorSettings() {
 
 	async function reset() {
 		try {
-			const fresh = await invoke<SupervisorConfig>("supervisor:get")
+			const fresh = (await sendWithCompat("supervisor:get")) as SupervisorConfig
 			setCfg({ ...DEFAULTS, ...fresh } as SupervisorConfig)
 			setError(null)
 		} catch (e: any) {

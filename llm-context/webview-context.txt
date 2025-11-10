@@ -334,7 +334,90 @@ export interface ExtensionMessage {
 
 
 ===== src/core/webview/webviewMessageHandler.ts (supervisor excerpts) =====
-// Lines 3856-3936
+// Lines 96-176
+import { searchWorkspaceFiles } from "../../services/search/file-search"
+import { fileExistsAtPath } from "../../utils/fs"
+import { playTts, setTtsEnabled, setTtsSpeed, stopTts } from "../../utils/tts"
+import { showSystemNotification } from "../../integrations/notifications" // kilocode_change
+import { singleCompletionHandler } from "../../utils/single-completion-handler" // kilocode_change
+import { searchCommits } from "../../utils/git"
+import { exportSettings, importSettingsWithFeedback } from "../config/importExport"
+import { getOpenAiModels } from "../../api/providers/openai"
+import { getVsCodeLmModels } from "../../api/providers/vscode-lm"
+import { openMention } from "../mentions"
+import { getWorkspacePath } from "../../utils/path"
+import { Mode, defaultModeSlug } from "../../shared/modes"
+import { getModels, flushModels } from "../../api/providers/fetchers/modelCache"
+import { GetModelsOptions } from "../../shared/api"
+import { generateSystemPrompt } from "./generateSystemPrompt"
+import { getCommand } from "../../utils/commands"
+import { toggleWorkflow, toggleRule, createRuleFile, deleteRuleFile } from "./kilorules"
+import { mermaidFixPrompt } from "../prompts/utilities/mermaid" // kilocode_change
+import { editMessageHandler, fetchKilocodeNotificationsHandler } from "../kilocode/webview/webviewMessageHandlerUtils" // kilocode_change
+
+const ALLOWED_VSCODE_SETTINGS = new Set(["terminal.integrated.inheritEnv"])
+
+import { MarketplaceManager, MarketplaceItemType } from "../../services/marketplace"
+import { setPendingTodoList } from "../tools/updateTodoListTool"
+import { UsageTracker } from "../../utils/usage-tracker"
+import { seeNewChanges } from "../checkpoints/kilocode/seeNewChanges" // kilocode_change
+import { getTaskHistory } from "../../shared/kilocode/getTaskHistory" // kilocode_change
+import { fetchAndRefreshOrganizationModesOnStartup, refreshOrganizationModes } from "./kiloWebviewMessgeHandlerHelpers"
+import { AutoPurgeScheduler } from "../../services/auto-purge" // kilocode_change
+
+export const webviewMessageHandler = async (
+	provider: ClineProvider,
+	message: MaybeTypedWebviewMessage | EditUnsuccessfulMessage, // Include EditUnsuccessfulMessage type
+	marketplaceManager?: MarketplaceManager,
+) => {
+	// RPC adapter: Check if message is an RPC envelope and handle it
+	if (isRpcEnvelope(message)) {
+		const converted = toTypeMessage(message)
+		try {
+			// Route message as if it were a native message.type
+			const result = await handleSupervisorMessage(provider, converted)
+			// Send response back in RPC format
+			rpcReply(provider.view, message.id, result)
+		} catch (e: any) {
+			rpcReply(provider.view, message.id, undefined, e?.message ?? "Unhandled RPC error")
+		}
+		return
+	}
+
+	// Utility functions provided for concise get/update of global state via contextProxy API.
+	const getGlobalState = <K extends keyof GlobalState>(key: K) => provider.contextProxy.getValue(key)
+	const updateGlobalState = async <K extends keyof GlobalState>(key: K, value: GlobalState[K]) =>
+		await provider.contextProxy.setValue(key, value)
+
+	const getCurrentCwd = () => {
+		return provider.getCurrentTask()?.cwd || provider.cwd
+	}
+	/**
+	 * Shared utility to find message indices based on timestamp
+	 */
+	const findMessageIndices = (messageTs: number, currentCline: any) => {
+		// Find the exact message by timestamp, not the first one after a cutoff
+		const messageIndex = currentCline.clineMessages.findIndex((msg: ClineMessage) => msg.ts === messageTs)
+		const apiConversationHistoryIndex = currentCline.apiConversationHistory.findIndex(
+			(msg: ApiMessage) => msg.ts === messageTs,
+		)
+		return { messageIndex, apiConversationHistoryIndex }
+	}
+
+	/**
+	 * Fallback: find first API history index at or after a timestamp.
+	 * Used when the exact user message isn't present in apiConversationHistory (e.g., after condense).
+	 */
+	const findFirstApiIndexAtOrAfter = (ts: number, currentCline: any) => {
+		if (typeof ts !== "number") return -1
+		return currentCline.apiConversationHistory.findIndex(
+			(msg: ApiMessage) => typeof msg?.ts === "number" && (msg.ts as number) >= ts,
+		)
+	}
+
+	/**
+
+// Lines 3904-3984
 				const { id, text, images } = message.payload as EditQueuedMessagePayload
 				provider.getCurrentTask()?.messageQueueService.updateMessage(id, text, images)
 			}
@@ -417,30 +500,22 @@ export interface ExtensionMessage {
 		case "supervisor:error": {
 			try {
 
-// Lines 3937-3938
+// Lines 3985-3986
 				if (!message.payload) {
 					throw new Error("No payload provided for supervisor:error")
 
-// Lines 3939-3940
+// Lines 3987-3988
 				}
 				await handleSupervisorError(message.payload, provider)
 
-// Lines 3941-3945
+// Lines 3989-3993
 			} catch (error) {
 				provider.log(
 					`Error handling supervisor error: ${error instanceof Error ? error.message : String(error)}`,
 				)
 			}
 
-// Lines 3946-3948
+// Lines 3994-3996
 			break
 		}
 		case "supervisor:result": {
-
-// Lines 3949-3954
-			try {
-				if (!message.payload) {
-					throw new Error("No payload provided for supervisor:result")
-				}
-				await handleSupervisorResult(message.payload, provider)
-			} catch (error) {

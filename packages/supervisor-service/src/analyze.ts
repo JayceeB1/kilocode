@@ -1,6 +1,7 @@
 import { Request, Response } from "express"
 import { getConfig } from "./config.js"
 import { analyzeWithLLM } from "./llm/index.js"
+import { buildSafeErrorDetails } from "./utils/errors.js"
 
 export interface AnalyzeRequest {
 	code: string
@@ -67,10 +68,15 @@ export async function analyzeCode(req: Request, res: Response): Promise<void> {
 
 		res.json(analysisResponse)
 	} catch (error) {
-		console.error("Analysis error:", error)
+		const safe = buildSafeErrorDetails(error)
+		if (safe.redacted) {
+			console.error("Analysis error (details redacted)")
+		} else {
+			console.error("Analysis error:", error)
+		}
 		res.status(500).json({
 			error: "Internal server error during analysis",
-			details: error instanceof Error ? error.message : "Unknown error",
+			details: safe.message,
 		})
 	}
 }

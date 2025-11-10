@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from "react"
-import { invoke } from "../utils/vscode"
+import { sendWithCompat } from "../utils/vscode"
 
 export type SupervisorConfig = {
 	version: 1
@@ -31,7 +31,7 @@ export const SupervisorProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 	useEffect(() => {
 		;(async () => {
 			try {
-				const cfg = await invoke<SupervisorConfig>("supervisor:get")
+				const cfg = await sendWithCompat("supervisor:get")
 				if (cfg && typeof cfg.enabled === "boolean") setEnabled(!!cfg.enabled)
 			} catch {
 				// Ignore errors

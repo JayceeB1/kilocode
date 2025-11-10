@@ -75,7 +75,7 @@ export default [
 			"properties": {
 				"kilo-code.supervisor.enabled": {
 					"type": "boolean",
-					"default": true,
+					"default": false,
 					"description": "Enable KiloCode Supervisor terminal capture and analysis"
 				},
 				"kilo-code.supervisor.serviceUrl": {
@@ -691,7 +691,7 @@ export class TerminalCapture implements vscode.Disposable {
 	private loadConfig(): TerminalCaptureConfig {
 		const config = vscode.workspace.getConfiguration("kilo-code.supervisor")
 		return {
-			enabled: config.get<boolean>("enabled", true),
+			enabled: config.get<boolean>("enabled", false),
 			captureCommands: config.get<string[]>("captureCommands", [
 				"npm test",
 				"pnpm test",
@@ -776,6 +776,6 @@ export class TerminalCapture implements vscode.Disposable {
 						issues: [issue],
 						suggestions: []
 					},
-					metadata
+					metadat
 …[truncated]
 # note: truncated to stay within per-file budget

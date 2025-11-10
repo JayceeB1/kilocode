@@ -31,7 +31,7 @@ pnpm build
 pnpm supervisor:dev
 
 # Dans un autre terminal, vérifier le service
-curl http://127.0.0.1:43110/health
+curl http://127.0.0.1:9611/health
 ```
 
 ### 3. Tester l'extension
@@ -61,7 +61,7 @@ pnpm test
 
 ```bash
 # Vérifier que le service répond
-curl -X POST http://127.0.0.1:43110/v1/analyze \
+curl -X POST http://127.0.0.1:9611/v1/analyze \
   -H "Content-Type: application/json" \
   -d '{"code":"console.log(\"test\");","language":"javascript"}'
 
@@ -91,7 +91,7 @@ pnpm build
 pnpm supervisor:dev
 
 # Dans un autre terminal, vérifier le service
-Invoke-RestMethod -Uri http://127.0.0.1:43110/health -Method GET
+Invoke-RestMethod -Uri http://127.0.0.1:9611/health -Method GET
 ```
 
 ### 3. Tester l'extension
@@ -126,7 +126,7 @@ $body = @{
     language = "javascript"
 } | ConvertTo-Json
 
-Invoke-RestMethod -Uri http://127.0.0.1:43110/v1/analyze `
+Invoke-RestMethod -Uri http://127.0.0.1:9611/v1/analyze `
     -Method POST `
     -ContentType "application/json" `
     -Body $body
@@ -141,8 +141,8 @@ Get-Content .kilocode/supervisor.config.json
 
 ```bash
 # Vérifier le port
-netstat -tlnp | grep 43110  # Linux/macOS
-Get-NetTCPConnection -LocalPort 43110  # Windows
+netstat -tlnp | grep 9611  # Linux/macOS
+Get-NetTCPConnection -LocalPort 9611  # Windows
 
 # Vérifier les logs
 pnpm supervisor:dev 2>&1 | tee supervisor.log
@@ -152,10 +152,10 @@ pnpm supervisor:dev 2>&1 | tee supervisor.log
 
 ```bash
 # Vérifier la configuration VS Code
-# Settings > KiloCode Supervisor > Service URL doit être http://127.0.0.1:43110
+# Settings > KiloCode Supervisor > Service URL doit être http://127.0.0.1:9611
 
 # Tester la connexion manuellement
-curl http://127.0.0.1:43110/health
+curl http://127.0.0.1:9611/health
 ```
 
 ### Tests échouent
@@ -175,7 +175,7 @@ pnpm --version  # Doit être 10.8.1+
 
 Après avoir exécuté ces commandes, vérifiez que :
 
-1. ✅ Le service Supervisor démarre sur `http://127.0.0.1:43110`
+1. ✅ Le service Supervisor démarre sur `http://127.0.0.1:9611`
 2. ✅ L'endpoint `/health` retourne `{"status":"healthy"}`
 3. ✅ L'extension KiloCode apparaît dans VS Code
 4. ✅ Les commandes de test passent sans erreur

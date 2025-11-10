@@ -114,6 +114,74 @@ window.addEventListener("message", (event) => {
 	else p.resolve(msg.result)
 })
 
+// Nouveau helper : messages typés "supervisor:get"/"supervisor:set"
+export function sendTyped(type: "supervisor:get" | "supervisor:set", payload?: any) {
+	vscode.postMessage({ type, payload })
+}
+
+// Fallback RPC (compat) uniquement si nécessaire
+export async function sendWithCompat(type: "supervisor:get" | "supervisor:set", payload?: any): Promise<any> {
+	return new Promise((resolve, reject) => {
+		let resolved = false
+		const cleanup = () => window.removeEventListener("message", onMessage)
+
+		const onMessage = (event: MessageEvent) => {
+			const msg = event.data
+			if (!msg || resolved) {
+				return
+			}
+
+			// Typed supervisor config responses from the extension
+			if (msg.type === "supervisorConfig") {
+				resolved = true
+				cleanup()
+				if (msg.error) {
+					reject(new Error(typeof msg.error === "string" ? msg.error : "supervisorConfig error"))
+				} else {
+					resolve(msg.config ?? msg.payload ?? msg.result ?? null)
+				}
+				return
+			}
+
+			if (msg.type === "supervisor:result" || msg.type === "supervisor:error") {
+				resolved = true
+				cleanup()
+				if (msg.type === "supervisor:error") {
+					reject(msg.error || "supervisor:error")
+				} else {
+					resolve(msg.payload ?? msg.result ?? true)
+				}
+				return
+			}
+
+			// Compat RPC (si l'extension répond en RPC)
+			if (msg.__rpc === true && (msg.result !== undefined || msg.error !== undefined)) {
+				resolved = true
+				cleanup()
+				if (msg.error) {
+					reject(msg.error)
+				} else {
+					resolve(msg.result)
+				}
+			}
+		}
+
+		window.addEventListener("message", onMessage)
+		try {
+			sendTyped(type, payload)
+			setTimeout(() => {
+				if (!resolved) {
+					cleanup()
+					reject(new Error("timeout"))
+				}
+			}, 8000)
+		} catch (e) {
+			cleanup()
+			reject(e)
+		}
+	})
+}
+
 // kilocode_change start
 // Make vscode available globally - this allows the playwright tests
 // to post messages directly so we can setup provider credentials

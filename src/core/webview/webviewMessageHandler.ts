@@ -20,6 +20,37 @@ import {
 import { EditUnsuccessfulMessage } from "../../shared/ExtensionMessage"
 // kilocode_change end
 
+// RPC adapter support for UI messages
+export type RpcEnvelope = { __rpc: true; id: string; command: string; payload?: any }
+
+/**
+ * Helper function to detect if a message is an RPC envelope
+ */
+export function isRpcEnvelope(msg: any): msg is RpcEnvelope {
+	return !!msg && msg.__rpc === true && typeof msg.id === "string" && typeof msg.command === "string"
+}
+
+/**
+ * Helper function to convert RPC envelope to internal message format
+ */
+export function toTypeMessage(rpc: RpcEnvelope) {
+	return { type: rpc.command, payload: rpc.payload, __rpc_id: rpc.id }
+}
+
+/**
+ * Helper function to send RPC response back to the webview
+ */
+function rpcReply(panel: vscode.WebviewPanel | vscode.WebviewView, id: string, result?: any, error?: string) {
+	const message = error ? { __rpc: true, id, error } : { __rpc: true, id, result }
+
+	// Handle both WebviewPanel and WebviewView types
+	if ("webview" in panel) {
+		panel.webview.postMessage(message)
+	} else {
+		panel.postMessage(message)
+	}
+}
+
 import {
 	type Language,
 	type GlobalState,
@@ -95,6 +126,20 @@ export const webviewMessageHandler = async (
 	message: MaybeTypedWebviewMessage | EditUnsuccessfulMessage, // Include EditUnsuccessfulMessage type
 	marketplaceManager?: MarketplaceManager,
 ) => {
+	// RPC adapter: Check if message is an RPC envelope and handle it
+	if (isRpcEnvelope(message)) {
+		const converted = toTypeMessage(message)
+		try {
+			// Route message as if it were a native message.type
+			const result = await handleSupervisorMessage(provider, converted)
+			// Send response back in RPC format
+			rpcReply(provider.view, message.id, result)
+		} catch (e: any) {
+			rpcReply(provider.view, message.id, undefined, e?.message ?? "Unhandled RPC error")
+		}
+		return
+	}
+
 	// Utility functions provided for concise get/update of global state via contextProxy API.
 	const getGlobalState = <K extends keyof GlobalState>(key: K) => provider.contextProxy.getValue(key)
 	const updateGlobalState = async <K extends keyof GlobalState>(key: K, value: GlobalState[K]) =>
@@ -4000,6 +4045,95 @@ export const webviewMessageHandler = async (
 			break
 		}
 	}
+
+	/**
+	 * Handles supervisor messages with RPC support
+	 * Returns a value for RPC responses when relevant
+	 */
+	async function handleSupervisorMessage(
+		message: { type: string; payload?: any; __rpc_id?: string },
+		provider: ClineProvider,
+	): Promise<any> {
+		// Handle supervisor:get command
+		if (message.type === "supervisor:get") {
+			try {
+				const cfg = await readSupervisorConfig()
+				await provider.postMessageToWebview({
+					type: "supervisorConfig",
+					config: cfg,
+				})
+				return cfg // Return for RPC response
+			} catch (error) {
+				provider.log(
+					`Error getting supervisor config: ${error instanceof Error ? error.message : String(error)}`,
+				)
+				await provider.postMessageToWebview({
+					type: "supervisorConfig",
+					error: error instanceof Error ? error.message : String(error),
+				})
+				throw error // Re-throw for RPC error response
+			}
+		}
+
+		// Handle supervisor:set command
+		if (message.type === "supervisor:set") {
+			try {
+				if (!message.payload) {
+					throw new Error("No configuration provided")
+				}
+				const cfg = await validateAndWriteSupervisorConfig(message.payload)
+				await provider.postMessageToWebview({
+					type: "supervisorConfig",
+					config: cfg,
+				})
+				return cfg // Return for RPC response
+			} catch (error) {
+				provider.log(
+					`Error setting supervisor config: ${error instanceof Error ? error.message : String(error)}`,
+				)
+				await provider.postMessageToWebview({
+					type: "supervisorConfig",
+					error: error instanceof Error ? error.message : String(error),
+				})
+				throw error // Re-throw for RPC error response
+			}
+		}
+
+		// Handle supervisor:error command
+		if (message.type === "supervisor:error") {
+			try {
+				if (!message.payload) {
+					throw new Error("No payload provided for supervisor:error")
+				}
+				await handleSupervisorError(message.payload, provider)
+				return { success: true } // Return for RPC response
+			} catch (error) {
+				provider.log(
+					`Error handling supervisor error: ${error instanceof Error ? error.message : String(error)}`,
+				)
+				throw error // Re-throw for RPC error response
+			}
+		}
+
+		// Handle supervisor:result command
+		if (message.type === "supervisor:result") {
+			try {
+				if (!message.payload) {
+					throw new Error("No payload provided for supervisor:result")
+				}
+				await handleSupervisorResult(message.payload, provider)
+				return { success: true } // Return for RPC response
+			} catch (error) {
+				provider.log(
+					`Error handling supervisor result: ${error instanceof Error ? error.message : String(error)}`,
+				)
+				throw error // Re-throw for RPC error response
+			}
+		}
+
+		// For non-supervisor messages, return undefined
+		return undefined
+	}
 }
 
 /**
@@ -4195,11 +4329,30 @@ async function readSupervisorConfig(): Promise<SupervisorConfig> {
 	}
 }
 
+const LOOPBACK_HOSTS = ["127.0.0.1", "::1", "localhost"]
+
 function validateSupervisorConfig(cfg: any): SupervisorConfig {
-	if (cfg.bind === "0.0.0.0") throw new Error("0.0.0.0 is forbidden")
+	const bind = cfg.bind ?? "127.0.0.1"
+	const allowLAN = !!cfg.allowLAN
+	const allowedLANs = Array.isArray(cfg.allowedLANs) ? cfg.allowedLANs : []
+
+	if (bind === "0.0.0.0") throw new Error("0.0.0.0 is forbidden")
 	if (typeof cfg.port !== "number" || cfg.port < 9600 || cfg.port > 9699)
 		throw new Error("Port must be between 9600 and 9699")
+
+	if (!allowLAN && !isLoopbackHost(bind)) {
+		throw new Error("Binding outside 127.0.0.1 requires allowLAN=true")
+	}
+
+	if (allowLAN && allowedLANs.length === 0) {
+		throw new Error("allowLAN=true requires at least one entry in allowedLANs")
+	}
+
 	return cfg as SupervisorConfig
+}
+
+function isLoopbackHost(host: string): boolean {
+	return LOOPBACK_HOSTS.includes(host)
 }
 
 async function validateAndWriteSupervisorConfig(payload: any): Promise<SupervisorConfig> {

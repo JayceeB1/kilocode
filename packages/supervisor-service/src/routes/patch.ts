@@ -8,6 +8,7 @@ import { SmartPatcher } from "../patch/SmartPatcher.js"
 import { createConservativeEnvelope, applySecurityConstraints } from "../patch/envelope.js"
 import type { PatchPlan, PatchPlanResult } from "../patch/types.js"
 import type { TaskEnvelope } from "../contracts/task-envelope.js"
+import { buildSafeErrorDetails } from "../utils/errors.js"
 
 /**
  * Patch request interface
@@ -42,7 +43,7 @@ export async function handlePatchRequest(req: Request, res: Response): Promise<v
 
 	try {
 		const rawBody = (req as any)?.body ?? {}
-		
+
 		// Validate request body
 		if (!rawBody.plan || typeof rawBody.plan !== "object") {
 			res.status(400).json({
@@ -111,12 +112,16 @@ export async function handlePatchRequest(req: Request, res: Response): Promise<v
 		// Return success response
 		res.json(response)
 	} catch (error) {
-		console.error("Patch execution error:", error)
-		
+		const safe = buildSafeErrorDetails(error)
+		if (safe.redacted) {
+			console.error("Patch execution error (details redacted)")
+		} else {
+			console.error("Patch execution error:", error)
+		}
 		const executionTime = Date.now() - startTime
 		res.status(500).json({
 			error: "Internal server error during patch execution",
-			details: error instanceof Error ? error.message : "Unknown error",
+			details: safe.message,
 			executionTimeMs: executionTime,
 		})
 	}
@@ -169,7 +174,10 @@ export function validatePatchPlan(plan: PatchPlan): boolean {
 				break
 
 			case "ast":
-				if (typeof op.selector !== "string" || !["replace", "insert_before", "insert_after", "remove"].includes(op.operation)) {
+				if (
+					typeof op.selector !== "string" ||
+					!["replace", "insert_before", "insert_after", "remove"].includes(op.operation)
+				) {
 					return false
 				}
 				break
