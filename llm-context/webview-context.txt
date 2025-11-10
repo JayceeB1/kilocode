@@ -1,2240 +1,446 @@
-# Context digest for src/core/webview# Files considered: 20# Max chars per file: 4000# Max chars per digest: 160000===== ClineProvider.ts =====
-import os from "os"
-import * as path from "path"
-import fs from "fs/promises"
-import EventEmitter from "events"
+# Context digest for Supervisor UI webview
+# Files considered: 3
+# Max chars per file: 4000
+# Max chars per digest: 160000
 
-import { Anthropic } from "@anthropic-ai/sdk"
-import delay from "delay"
-import axios from "axios"
-import pWaitFor from "p-wait-for"
-import * as vscode from "vscode"
+===== src/shared/WebviewMessage.ts =====
+import { z } from "zod"
 
 import {
-	type TaskProviderLike,
-	type TaskProviderEvents,
-	type GlobalState,
-	type ProviderName,
 	type ProviderSettings,
-	type RooCodeSettings,
-	type ProviderSettingsEntry,
-	type StaticAppProperties,
-	type DynamicAppProperties,
-	type CloudAppProperties,
-	type TaskProperties,
-	type GitProperties,
-	type TelemetryProperties,
-	type TelemetryPropertiesProvider,
-	type CodeActionId,
-	type CodeActionName,
-	type TerminalActionId,
-	type TerminalActionPromptType,
-	type HistoryItem,
-	type CloudUserInfo,
-	type CloudOrganizationMembership,
-	type CreateTaskOptions,
-	type TokenUsage,
-	RooCodeEventName,
-	requestyDefaultModelId,
-	openRouterDefaultModelId,
-	glamaDefaultModelId,
-	DEFAULT_TERMINAL_OUTPUT_CHARACTER_LIMIT,
-	DEFAULT_WRITE_DELAY_MS,
-	ORGANIZATION_ALLOW_ALL,
-	DEFAULT_MODES,
-	getActiveToolUseStyle, // kilocode_change
+	type PromptComponent,
+	type ModeConfig,
+	type InstallMarketplaceItemOptions,
+	type MarketplaceItem,
+	type ShareVisibility,
+	type QueuedMessage,
+	marketplaceItemSchema,
+	// kilocode_change start
+	CommitRange,
+	HistoryItem,
+	GlobalState,
+	// kilocode_change end
 } from "@roo-code/types"
-import { TelemetryService } from "@roo-code/telemetry"
-import { CloudService, BridgeOrchestrator, getRooCodeApiUrl } from "@roo-code/cloud"
 
-import { Package } from "../../shared/package"
-import { findLast } from "../../shared/array"
-import { supportPrompt } from "../../shared/support-prompt"
-import { GlobalFileNames } from "../../shared/globalFileNames"
-import type { ExtensionMessage, ExtensionState, MarketplaceInstalledMetadata } from "../../shared/ExtensionMessage"
-import { Mode, defaultModeSlug, getModeBySlug } from "../../shared/modes"
-import { experimentDefault } from "../../shared/experiments"
-import { formatLanguage } from "../../shared/language"
-import { WebviewMessage } from "../../shared/WebviewMessage"
-import { EMBEDDING_MODEL_PROFILES } from "../../shared/embeddingModels"
-import { ProfileValidator } from "../../shared/ProfileValidator"
+import { Mode } from "./modes"
 
-import { Terminal } from "../../integrations/terminal/Terminal"
-import { downloadTask } from "../../integrations/misc/export-markdown"
-import { getTheme } from "../../integrations/theme/getTheme"
-import WorkspaceTracker from "../../integrations/workspace/WorkspaceTracker"
+export type ClineAskResponse =
+	| "yesButtonClicked"
+	| "noButtonClicked"
+	| "messageResponse"
+	| "objectResponse"
+	| "retry_clicked" // kilocode_change: Added retry_clicked for payment required dialog
 
-import { McpHub } from "../../services/mcp/McpHub"
-import { McpServerManager } from "../../services/mcp/McpServerManager"
-import { MarketplaceManager } from "../../services/marketplace"
-import { ShadowCheckpointService } from "../../services/checkpoints/ShadowCheckpointService"
-import { CodeIndexManager } from "../../services/code-index/manager"
-import type { IndexProgressUpdate } from "../../services/code-index/interfaces/manager"
-import { MdmService } from "../../services/mdm/MdmService"
+export type PromptMode = Mode | "enhance"
 
-import { fileExistsAtPath } from "../../utils/fs"
-import { setTtsEnabled, setTtsSpeed } from "../../utils/tts"
-import { getWorkspaceGitInfo } from "../../utils/git"
-import { getWorkspacePath } from "../../utils/path"
-import { OrganizationAllowListViolationError } from "../../utils/errors"
+export type AudioType = "notification" | "celebration" | "progress_loop"
 
-import { setPanel } from "../../activate/registerCommands"
+export interface UpdateTodoListPayload {
+	todos: any[]
+}
 
-import { t } from "../../i18n"
+export type EditQueuedMessagePayload = Pick<QueuedMessage, "id" | "text" | "images">
 
-import { buildApiHandler } from "../../api"
-import { forceFullModelDetailsLoad, hasLoadedFullDetails } from "../../api/providers/fetchers/lmstudio"
+// kilocode_change start: Type-safe global state update message
+export type GlobalStateValue<K extends keyof GlobalState> = GlobalState[K]
+export type UpdateGlobalStateMessage<K extends keyof GlobalState = keyof GlobalState> = {
+	type: "updateGlobalState"
+	stateKey: K
+	stateValue: GlobalStateValue<K>
+}
+// kilocode_change end: Type-safe global state update message
 
-import { ContextProxy } from "../config/ContextProxy"
-import { getEnabledRules } from "./kilorules"
-import { ProviderSettingsManager } from "../config/ProviderSettingsManager"
-import { CustomModesManager } from "../config/CustomModesManager"
-import { Task } from "../task/Task"
-import { getSystemPromptFilePath } from "../prompts/sections/custom-system-prompt"
-
-import { webviewMessageHandler } from "./webviewMessageHandler"
-import type { ClineMessage } from "@roo-code/types"
-import { readApiMessages, saveApiMessages, saveTaskMessages } from "../task-persistence"
-import { getNonce } from "./getNonce"
-import { getUri } from "./getUri"
-
-//kilocode_change start
-import { McpDownloadResponse, McpMarketplaceCat
+export interface WebviewMessage {
+	type:
+		| "updateTodoList"
+		| "deleteMultipleTasksWithIds"
+		| "currentApiConfigName"
+		| "saveApiConfiguration"
+		| "upsertApiConfiguration"
+		| "deleteApiConfiguration"
+		| "loadApiConfiguration"
+		| "loadApiConfigurationById"
+		| "renameApiConfiguration"
+		| "getListApiConfiguration"
+		| "customInstructions"
+		| "allowedCommands"
+		| "deniedCommands"
+		| "alwaysAllowReadOnly"
+		| "alwaysAllowReadOnlyOutsideWorkspace"
+		| "alwaysAllowWrite"
+		| "alwaysAllowWriteOutsideWorkspace"
+		| "alwaysAllowWriteProtected"
+		| "alwaysAllowExecute"
+		| "alwaysAllowFollowupQuestions"
+		| "alwaysAllowUpdateTodoList"
+		| "followupAutoApproveTimeoutMs"
+		| "webviewDidLaunch"
+		| "newTask"
+		| "askResponse"
+		| "terminalOperation"
+		| "clearTask"
+		| "didShowAnnouncement"
+		| "selectImages"
+		| "exportCurrentTask"
+		| "shareCurrentTask"
+		| "showTaskWithId"
+		| "deleteTaskWithId"
+		| "exportTaskWithId"
+		| "importSettings"
+		| "toggleToolAutoApprove"
+		| "openExtensionSettings"
+		| "openInBrowser"
+		| "fetchOpenGraphData"
+		| "checkIsImageUrl"
+		| "exportSettings"
+		| "resetState"
+		| "flushRouterModels"
+		| "requestRouterModels"
+		| "requestOpenAiModels"
+		| "requestOllamaModels"
+		| "requestLmStudioModels"
+		| "requestVsCodeLmModels"
+		| "requestHuggingFaceModels"
+		| "openImage"
+		| "saveImage"
+		| "openFile"
+		| "openMention"
+		| "cancelTask"
+		| "updateVSCodeSetting"
+		| "getVSCodeSetting"
+		| "vsCodeSetting"
+		| "alwaysAllowBrowser"
+		| "alwaysAllowMcp"
+		| "alwaysAllowModeSwitch"
+		| "allowedMaxRequests"
+		| "allowedMaxCost"
+		| "alwaysAllowSubtasks"
+		| "alwaysAllowUpdateTodoList"
+		| "autoCondenseContext"
+		| "autoCondenseContextPercent"
+		| "condensingApiConfigId"
+		| "updateCondensingPrompt"
+		| "playSound"
+		| "playTts"
+		| "stopTts"
+		| "soundEnabled"
+		| "ttsEnabled"
+		| "ttsSpeed"
+		| "soundVolume"
+		| "diffEnabled"
+		| "enableCheckpoints"
+		| "browserViewportSize"
+		| "screenshotQuality"
+		| "remoteBrowserHost"
+		| "openKeyboardShortcuts"
+		| "openMcpSettings"
+		| "openProjectMcpSettings"
+		| "restartMcpServer"
+		| "refreshAllMcpServers"
+		| "toggleToolAlwaysAllow"
+		| "toggleToolEnabledForPrompt"
+		| "toggleMcpServer"
+		| "updateMcpTimeout"
+		| "fuzzyMatchThreshold"
+		| "morphApiKey" // kilocode_change: Morph fast apply - global setting
+		| "fastApplyModel" // kilocode_change: Fast Apply model selection
+		| "writeDelayMs"
+		| "diagnosticsEnabled"
+		| "enhancePrompt"
+		| "enhancedPrompt"
+		| "draggedImages"
+		| "deleteMessage"
+		| "deleteMessageConfirm"
+		| "submitEditedMessage"
+		| "editMessageConfirm"
+		| "terminalOutputLineLimit"
+		| "terminalOutputCharacterLimit"
+		| "terminalShellIntegrationTimeout"
+		| "terminalShellIntegrationDisabled"
+		| "terminalCommandDelay"
+		| "terminalPowershellCounter"
+		| "t
 …[truncated]
+
 # note: truncated to stay within per-file budget
 
-===== checkpointRestoreHandler.ts =====
-import { Task } from "../task/Task"
-import { ClineProvider } from "./ClineProvider"
-import { saveTaskMessages } from "../task-persistence"
-import * as vscode from "vscode"
-import pWaitFor from "p-wait-for"
-import { t } from "../../i18n"
 
-export interface CheckpointRestoreConfig {
-	provider: ClineProvider
-	currentCline: Task
-	messageTs: number
-	messageIndex: number
-	checkpoint: { hash: string }
-	operation: "delete" | "edit"
-	editData?: {
-		editedContent: string
-		images?: string[]
-		apiConversationHistoryIndex: number
+===== src/shared/ExtensionMessage.ts =====
+import type {
+	GlobalSettings,
+	ProviderSettingsEntry,
+	ProviderSettings,
+	ModelInfo, // kilocode_change
+	HistoryItem,
+	ModeConfig,
+	TelemetrySetting,
+	Experiments,
+	ClineMessage,
+	MarketplaceItem,
+	TodoItem,
+	CloudUserInfo,
+	CloudOrganizationMembership,
+	OrganizationAllowList,
+	ShareVisibility,
+	QueuedMessage,
+} from "@roo-code/types"
+
+import { GitCommit } from "../utils/git"
+
+import { McpServer } from "./mcp"
+import { McpMarketplaceCatalog, McpDownloadResponse } from "./kilocode/mcp"
+import { Mode } from "./modes"
+import { ModelRecord, RouterModels } from "./api"
+// kilocode_change start
+import {
+	ProfileDataResponsePayload,
+	BalanceDataResponsePayload,
+	TaskHistoryResponsePayload,
+	TasksByIdResponsePayload,
+} from "./WebviewMessage"
+import { ClineRulesToggles } from "./cline-rules"
+import { KiloCodeWrapperProperties } from "./kilocode/wrapper"
+// kilocode_change end
+
+// Command interface for frontend/backend communication
+export interface Command {
+	name: string
+	source: "global" | "project" | "built-in"
+	filePath?: string
+	description?: string
+	argumentHint?: string
+}
+
+// Type for marketplace installed metadata
+export interface MarketplaceInstalledMetadata {
+	project: Record<string, { type: string }>
+	global: Record<string, { type: string }>
+}
+
+// Indexing status types
+export interface IndexingStatus {
+	systemStatus: string
+	message?: string
+	processedItems: number
+	totalItems: number
+	currentItemUnit?: string
+	workspacePath?: string
+}
+
+export interface IndexingStatusUpdateMessage {
+	type: "indexingStatusUpdate"
+	values: IndexingStatus
+}
+
+/**
+ * Message type for supervisor error notifications
+ */
+export interface SupervisorErrorMessage {
+	type: "supervisor:error"
+	/** Error payload containing error details */
+	payload: any
+}
+
+/**
+ * Message type for supervisor result notifications
+ */
+export interface SupervisorResultMessage {
+	type: "supervisor:result"
+	/** Result payload containing operation results */
+	payload: any
+}
+
+/**
+ * Message type for unsuccessful edit operations
+ */
+export interface EditUnsuccessfulMessage {
+	type: "edit:unsuccessful"
+	/** Payload containing error details */
+	payload: {
+		/** ID of the message that triggered the edit */
+		messageId: string
+		/** Optional file path where the edit failed */
+		file?: string
+		/** Optional error description */
+		error?: string
 	}
 }
 
 /**
- * Handles checkpoint restoration for both delete and edit operations.
- * This consolidates the common logic while handling operation-specific behavior.
+ * Message type for supervisor patcher events
  */
-export async function handleCheckpointRestoreOperation(config: CheckpointRestoreConfig): Promise<void> {
-	const { provider, currentCline, messageTs, checkpoint, operation, editData } = config
+export interface SupervisorPatcherEventMessage {
+	type: "supervisor:patcherEvent"
+	/** ID of the message that triggered the patcher event */
+	messageId: string
+	/** Classification of the patcher result */
+	classification: "applied" | "anchor_mismatch" | "lint_error" | "type_error" | "noop" | "unknown"
+	/** Optional file path where the patcher was applied */
+	file?: string
+	/** Optional error description if the patcher failed */
+	error?: string
+	/** Optional suggested plan for remediation */
+	suggestedPlan?: any
+}
 
-	try {
-		// For delete operations, ensure the task is properly aborted to handle any pending ask operations
-		// This prevents "Current ask promise was ignored" errors
-		// For edit operations, we don't abort because the checkpoint restore will handle it
-		if (operation === "delete" && currentCline && !currentCline.abort) {
-			currentCline.abortTask()
-			// Wait a bit for the abort to complete
-			await pWaitFor(() => currentCline.abort === true, {
-				timeout: 1000,
-				interval: 50,
-			}).catch(() => {
-				// Continue even if timeout - the abort flag should be set
+export interface LanguageModelChatSelector {
+	vendor?: string
+	family?: string
+	version?: string
+	id?: string
+}
+
+// Represents JSON data that is sent from extension to webview, called
+// ExtensionMessage and has 'type' enum which can be 'plusButtonClicked' or
+// 'settingsButtonClicked' or 'hello'. Webview will hold state.
+export interface ExtensionMessage {
+	type:
+		| "action"
+		| "state"
+		| "selectedImages"
+		| "theme"
+		| "workspaceUpdated"
+		| "invoke"
+		| "messageUpdated"
+		| "mcpServers"
+		| "enhancedPrompt"
+		| "commitSearchResults"
+		| "listApiConfig"
+		| "routerModels"
+		| "openAiModels"
+		| "ollamaModels"
+		| "lmStudioModels"
+		| "vsCodeLmModels"
+		| "huggingFaceModels"
+		| "vsCodeLmApiAvailable"
+		| "updatePrompt"
+		| "systemPrompt"
+		| "autoApprovalEnabled"
+		| "yoloMode" // kilocode_change
+		| "updateCustomMode"
+		| "deleteCustomMode"
+		| "exportModeResult"
+		| "importModeResult"
+		| "checkRulesDirectoryResult"
+		| "deleteCustomModeCheck"
+		| "currentCheckpointUpdated"
+		| "showHumanRelayDialog"
+		| "humanRelayResponse"
+		| "humanRelayCancel"
+		| "insertTextToC
+…[truncated]
+
+# note: truncated to stay within per-file budget
+
+
+===== src/core/webview/webviewMessageHandler.ts (supervisor excerpts) =====
+// Lines 3856-3936
+				const { id, text, images } = message.payload as EditQueuedMessagePayload
+				provider.getCurrentTask()?.messageQueueService.updateMessage(id, text, images)
+			}
+
+			break
+		}
+		case "dismissUpsell": {
+			if (message.upsellId) {
+				try {
+					// Get current list of dismissed upsells
+					const dismissedUpsells = getGlobalState("dismissedUpsells") || []
+
+					// Add the new upsell ID if not already present
+					let updatedList = dismissedUpsells
+					if (!dismissedUpsells.includes(message.upsellId)) {
+						updatedList = [...dismissedUpsells, message.upsellId]
+						await updateGlobalState("dismissedUpsells", updatedList)
+					}
+
+					// Send updated list back to webview (use the already computed updatedList)
+					await provider.postMessageToWebview({
+						type: "dismissedUpsells",
+						list: updatedList,
+					})
+				} catch (error) {
+					// Fail silently as per Bruno's comment - it's OK to fail silently in this case
+					provider.log(`Failed to dismiss upsell: ${error instanceof Error ? error.message : String(error)}`)
+				}
+			}
+			break
+		}
+		case "getDismissedUpsells": {
+			// Send the current list of dismissed upsells to the webview
+			const dismissedUpsells = getGlobalState("dismissedUpsells") || []
+			await provider.postMessageToWebview({
+				type: "dismissedUpsells",
+				list: dismissedUpsells,
 			})
+			break
 		}
-
-		// For edit operations, set up pending edit data before restoration
-		if (operation === "edit" && editData) {
-			const operationId = `task-${currentCline.taskId}`
-			provider.setPendingEditOperation(operationId, {
-				messageTs,
-				editedContent: editData.editedContent,
-				images: editData.images,
-				messageIndex: config.messageIndex,
-				apiConversationHistoryIndex: editData.apiConversationHistoryIndex,
-			})
-		}
-
-		// Perform the checkpoint restoration
-		await currentCline.checkpointRestore({
-			ts: messageTs,
-			commitHash: checkpoint.hash,
-			mode: "restore",
-			operation,
-		})
-
-		// For delete operations, we need to save messages and reinitialize
-		// For edit operations, the reinitialization happens automatically
-		// and processes the pending edit
-		if (operation === "delete") {
-			// Save the updated messages to disk after checkpoint restoration
-			await saveTaskMessages({
-				messages: currentCline.clineMessages,
-				taskId: currentCline.taskId,
-				globalStoragePath: provider.contextProxy.globalStorageUri.fsPath,
-			})
-
-			// Get the updated history item and reinitialize
-			const { historyItem } = await provider.getTaskWithId(currentCline.taskId)
-			await provider.createTaskWithHistoryItem(historyItem)
-		}
-		// For edit operations, the task cancellation in checkpointRestore
-		// will trigger reinitialization, which will process pendingEditAfterRestore
-	} catch (error) {
-		console.error(`Error in checkpoint restore (${operation}):`, error)
-		vscode.window.showErrorMessage(
-			`Error during checkpoint restore: ${error instanceof Error ? error.message : String(error)}`,
-		)
-		throw error
-	}
-}
-
-/**
- * Common checkpoint restore validation and initialization utility.
- * This can be used by any checkpoint restore flow that needs to wait for initialization.
- */
-export async function waitForClineInitialization(provider: ClineProvider, timeoutMs: number = 3000): Promise<boolean> {
-	try {
-		await pWaitFor(() => provider.getCurrentTask()?.isInitialized === true, {
-			timeout: timeoutMs,
-		})
-		return true
-	} catch (error) {
-		vscode.window.showErrorMessage(t("common:errors.checkpoint_timeout"))
-		return false
-	}
-}
-
-===== generateSystemPrompt.ts =====
-import * as vscode from "vscode"
-import { WebviewMessage } from "../../shared/WebviewMessage"
-import { defaultModeSlug, getModeBySlug, getGroupName } from "../../shared/modes"
-import { buildApiHandler } from "../../api"
-import { experiments as experimentsModule, EXPERIMENT_IDS } from "../../shared/experiments"
-import { getActiveToolUseStyle } from "@roo-code/types" // kilocode_change
-import { SYSTEM_PROMPT } from "../prompts/system"
-import { MultiSearchReplaceDiffStrategy } from "../diff/strategies/multi-search-replace"
-import { MultiFileSearchReplaceDiffStrategy } from "../diff/strategies/multi-file-search-replace"
-
-import { ClineProvider } from "./ClineProvider"
-
-export const generateSystemPrompt = async (provider: ClineProvider, message: WebviewMessage) => {
-	const state = await provider.getState() // kilocode_change
-
-	const {
-		apiConfiguration,
-		customModePrompts,
-		customInstructions,
-		browserViewportSize,
-		diffEnabled,
-		mcpEnabled,
-		fuzzyMatchThreshold,
-		experiments,
-		enableMcpServerCreation,
-		browserToolEnabled,
-		language,
-		maxReadFileLine,
-		maxConcurrentFileReads,
-	} = state // kilocode_change
-
-	// Check experiment to determine which diff strategy to use
-	const isMultiFileApplyDiffEnabled = experimentsModule.isEnabled(
-		experiments ?? {},
-		EXPERIMENT_IDS.MULTI_FILE_APPLY_DIFF,
-	)
-
-	const diffStrategy = isMultiFileApplyDiffEnabled
-		? new MultiFileSearchReplaceDiffStrategy(fuzzyMatchThreshold)
-		: new MultiSearchReplaceDiffStrategy(fuzzyMatchThreshold)
-
-	const cwd = provider.cwd
-
-	const mode = message.mode ?? defaultModeSlug
-	const customModes = await provider.customModesManager.getCustomModes()
-
-	const rooIgnoreInstructions = provider.getCurrentTask()?.rooIgnoreController?.getInstructions()
-
-	// Determine if browser tools can be used based on model support, mode, and user settings
-	let modelSupportsComputerUse = false
-
-	// Create a temporary API handler to check if the model supports computer use
-	// This avoids relying on an active Cline instance which might not exist during preview
-	try {
-		const tempApiHandler = buildApiHandler(apiConfiguration)
-		// kilocode_change: supports images => supports browser
-		modelSupportsComputerUse = tempApiHandler.getModel().info.supportsImages ?? false
-	} catch (error) {
-		console.error("Error checking if model supports computer use:", error)
-	}
-
-	// Check if the current mode includes the browser tool group
-	const modeConfig = getModeBySlug(mode, customModes)
-	const modeSupportsBrowser = modeConfig?.groups.some((group) => getGroupName(group) === "browser") ?? false
-
-	// Only enable browser tools if the model supports it, the mode includes browser tools,
-	// and browser tools are enabled in settings
-	const canUseBrowserTool = modelSupportsComputerUse && modeSupportsBrowser && (browserToolEnabled ?? true)
-
-	const systemPrompt = await SYSTEM_PROMPT(
-		provider.context,
-		cwd,
-		canUseBrowserTool,
-		mcpEnabled ? provider.getMcpHub() : undefined,
-		diffStrategy,
-		browserViewportSize ?? "900x600",
-		mode,
-		customModePrompts,
-		customModes,
-		customInstructions,
-		diffEnabled,
-		experiments,
-		enableMcpServerCreation,
-		language,
-		rooIgnoreInstructions,
-		maxReadFileLine !== -1,
-		{
-			maxConcurrentFileReads: maxConcurrentFileReads ?? 5,
-			todoListEnabled: apiConfiguration?.todoListEnabled ?? true,
-			useAgentRules: vscode.workspace.getConfiguration("kilo-code").get<boolean>("useAgentRules") ?? true,
-			newTaskRequireTodos: vscode.workspace
-				.getConfiguration("kilo-code")
-				.get<boolean>("newTaskRequireTodos", false),
-		},
-		// kilocode_change start
-		undefined,
-		undefined,
-		getActiveToolUseStyle(apiConfiguration),
-		state,
-		// kilocode_change end
-	)
-
-	return systemPrompt
-}
-
-===== getNonce.ts =====
-/**
- * A helper function that returns a unique alphanumeric identifier called a nonce.
- *
- * @remarks This function is primarily used to help enforce content security
- * policies for resources/scripts being executed in a webview context.
- *
- * @returns A nonce
- */
-export function getNonce() {
-	let text = ""
-	const possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-	for (let i = 0; i < 32; i++) {
-		text += possible.charAt(Math.floor(Math.random() * possible.length))
-	}
-	return text
-}
-
-===== getUri.ts =====
-import { Uri, Webview } from "vscode"
-/**
- * A helper function which will get the webview URI of a given file or resource.
- *
- * @remarks This URI can be used within a webview's HTML as a link to the
- * given file/resource.
- *
- * @param webview A reference to the extension webview
- * @param extensionUri The URI of the directory containing the extension
- * @param pathList An array of strings representing the path to a file/resource
- * @returns A URI pointing to the file/resource
- */
-export function getUri(webview: Webview, extensionUri: Uri, pathList: string[]) {
-	return webview.asWebviewUri(Uri.joinPath(extensionUri, ...pathList))
-}
-
-===== kiloWebviewMessgeHandlerHelpers.ts =====
-// kilocode_change - new file
-
-import { GlobalState } from "@roo-code/types"
-import { WebviewMessage } from "../../shared/WebviewMessage"
-import { ClineProvider } from "./ClineProvider"
-
-export async function refreshOrganizationModes(
-	message: WebviewMessage,
-	provider: ClineProvider,
-	updateGlobalState: <K extends keyof GlobalState>(key: K, value: GlobalState[K]) => Promise<void>,
-) {
-	if (message.apiConfiguration?.kilocodeToken) {
-		try {
-			const orgModes = await provider.customModesManager.fetchOrganizationModes(
-				message.apiConfiguration.kilocodeToken,
-				message.apiConfiguration.kilocodeOrganizationId,
-				message.apiConfiguration.kilocodeTesterWarningsDisabledUntil,
-			)
-
-			// Refresh custom modes with organization modes
-			await provider.customModesManager.refreshWithOrganizationModes(orgModes)
-
-			// Update global state
-			const customModes = await provider.customModesManager.getCustomModes()
-			await updateGlobalState("customModes", customModes)
-
-			provider.log(
-				`Organization modes refreshed: ${orgModes.length} organization modes, ${customModes.length} total modes`,
-			)
-		} catch (error) {
-			provider.log(
-				`Failed to fetch organization modes: ${error instanceof Error ? error.message : String(error)}`,
-			)
-			// Continue even if organization modes fetch fails
-		}
-	}
-}
-
-export async function fetchAndRefreshOrganizationModesOnStartup(
-	provider: ClineProvider,
-	updateGlobalState: <K extends keyof GlobalState>(key: K, value: GlobalState[K]) => Promise<void>,
-) {
-	const startupState = await provider.getState()
-	if (startupState.apiConfiguration.kilocodeToken && startupState.apiConfiguration.kilocodeOrganizationId) {
-		try {
-			const orgModes = await provider.customModesManager.fetchOrganizationModes(
-				startupState.apiConfiguration.kilocodeToken,
-				startupState.apiConfiguration.kilocodeOrganizationId,
-				startupState.apiConfiguration.kilocodeTesterWarningsDisabledUntil,
-			)
-
-			if (orgModes.length > 0) {
-				await provider.customModesManager.refreshWithOrganizationModes(orgModes)
-				const updatedCustomModes = await provider.customModesManager.getCustomModes()
-				await updateGlobalState("customModes", updatedCustomModes)
-
+		case "supervisor:get": {
+			try {
+				const cfg = await readSupervisorConfig()
+				await provider.postMessageToWebview({
+					type: "supervisorConfig",
+					config: cfg,
+				})
+			} catch (error) {
 				provider.log(
-					`Loaded ${orgModes.length} organization modes on startup for organization ${startupState.apiConfiguration.kilocodeOrganizationId}`,
+					`Error getting supervisor config: ${error instanceof Error ? error.message : String(error)}`,
+				)
+				await provider.postMessageToWebview({
+					type: "supervisorConfig",
+					error: error instanceof Error ? error.message : String(error),
+				})
+			}
+			break
+		}
+		case "supervisor:set": {
+			try {
+				if (!message.payload) {
+					throw new Error("No configuration provided")
+				}
+				const cfg = await validateAndWriteSupervisorConfig(message.payload)
+				await provider.postMessageToWebview({
+					type: "supervisorConfig",
+					config: cfg,
+				})
+			} catch (error) {
+				provider.log(
+					`Error setting supervisor config: ${error instanceof Error ? error.message : String(error)}`,
+				)
+				await provider.postMessageToWebview({
+					type: "supervisorConfig",
+					error: error instanceof Error ? error.message : String(error),
+				})
+			}
+			break
+		}
+		case "supervisor:error": {
+			try {
+
+// Lines 3937-3938
+				if (!message.payload) {
+					throw new Error("No payload provided for supervisor:error")
+
+// Lines 3939-3940
+				}
+				await handleSupervisorError(message.payload, provider)
+
+// Lines 3941-3945
+			} catch (error) {
+				provider.log(
+					`Error handling supervisor error: ${error instanceof Error ? error.message : String(error)}`,
 				)
 			}
-		} catch (error) {
-			provider.log(
-				`Failed to fetch organization modes on startup: ${error instanceof Error ? error.message : String(error)}`,
-			)
-			// Continue with startup even if organization modes fetch fails
+
+// Lines 3946-3948
+			break
 		}
-	}
-}
+		case "supervisor:result": {
 
-===== kilorules.ts =====
-import os from "os"
-import * as path from "path"
-import fs from "fs/promises"
-import * as vscode from "vscode"
-import { fileExistsAtPath } from "../../utils/fs"
-import { openFile } from "../../integrations/misc/open-file"
-import { getWorkspacePath } from "../../utils/path"
-import type { ContextProxy } from "../config/ContextProxy"
-import type { ClineRulesToggles } from "../../shared/cline-rules"
-import { t } from "../../i18n"
-import { GlobalFileNames } from "../../shared/globalFileNames"
-import { allowedExtensions } from "../../shared/kilocode/rules"
-
-export interface RulesData {
-	globalRules: ClineRulesToggles
-	localRules: ClineRulesToggles
-	globalWorkflows: ClineRulesToggles
-	localWorkflows: ClineRulesToggles
-}
-
-export async function getEnabledRules(
-	workspacePath: string,
-	contextProxy: ContextProxy,
-	context: vscode.ExtensionContext,
-): Promise<RulesData> {
-	const homedir = os.homedir()
-	return {
-		globalRules: await getEnabledRulesFromDirectory(
-			path.join(homedir, GlobalFileNames.kiloRules),
-			((await contextProxy.getGlobalState("globalRulesToggles")) as ClineRulesToggles) || {},
-		),
-		localRules: await getEnabledRulesFromDirectory(
-			path.join(workspacePath, GlobalFileNames.kiloRules),
-			((await contextProxy.getWorkspaceState(context, "localRulesToggles")) as ClineRulesToggles) || {},
-		),
-		globalWorkflows: await getEnabledRulesFromDirectory(
-			path.join(os.homedir(), GlobalFileNames.workflows),
-			((await contextProxy.getGlobalState("globalWorkflowToggles")) as ClineRulesToggles) || {},
-		),
-		localWorkflows: await getEnabledRulesFromDirectory(
-			path.join(workspacePath, GlobalFileNames.workflows),
-			((await contextProxy.getWorkspaceState(context, "localWorkflowToggles")) as ClineRulesToggles) || {},
-		),
-	}
-}
-
-async function getEnabledRulesFromDirectory(
-	dirPath: string,
-	toggleState: ClineRulesToggles = {},
-): Promise<ClineRulesToggles> {
-	const exists = await fileExistsAtPath(dirPath)
-	if (!exists) {
-		return {}
-	}
-
-	const files = await fs.readdir(dirPath, { withFileTypes: true })
-	const rules: ClineRulesToggles = {}
-
-	for (const file of files) {
-		if (file.isFile() && allowedExtensions.some((ext) => file.name.toLowerCase().endsWith(ext))) {
-			const filePath = path.join(dirPath, file.name)
-			rules[filePath] = toggleState[filePath] ?? true
-		}
-	}
-
-	return rules
-}
-
-export async function toggleWorkflow(
-	workflowPath: string,
-	enabled: boolean,
-	isGlobal: boolean,
-	contextProxy: ContextProxy,
-	context: vscode.ExtensionContext,
-): Promise<void> {
-	if (isGlobal) {
-		const toggles = ((await contextProxy.getGlobalState("globalWorkflowToggles")) as ClineRulesToggles) || {}
-		toggles[workflowPath] = enabled
-		await contextProxy.updateGlobalState("globalWorkflowToggles", toggles)
-	} else {
-		const toggles =
-			((await contextProxy.getWorkspaceState(context, "localWorkflowToggles")) as ClineRulesToggles) || {}
-		toggles[workflowPath] = enabled
-		await contextProxy.updateWorkspaceState(context, "localWorkflowToggles", toggles)
-	}
-}
-
-export async function toggleRule(
-	rulePath: string,
-	enabled: boolean,
-	isGlobal: boolean,
-	contextProxy: ContextProxy,
-	context: vscode.ExtensionContext,
-): Promise<void> {
-	if (isGlobal) {
-		const toggles = ((await contextProxy.getGlobalState("globalRulesToggles")) as ClineRulesToggles) || {}
-		toggles[rulePath] = enabled
-		await contextProxy.updateGlobalState("globalRulesToggles", toggles)
-	} else {
-		const toggles =
-			((await contextProxy.getWorkspaceState(context, "localRulesToggles")) as ClineRulesToggles) || {}
-		toggles[rulePath] = enabled
-		await contextProxy.updateWorkspaceState(context, "localRulesToggles", toggles)
-	}
-}
-
-function getRuleDirectoryPath(baseDir: string, ruleType: "rule" | "workflow") {
-	return ruleType === "workflow"
-		? path.join(baseDir, GlobalFileNames.workflows)
-		: path.join(baseDir, GlobalFileNames.kiloRules)
-}
-
-export async function createRuleFile(
-	filename: string,
-	isGlobal: boolean,
-	ruleType: "rule" | "workflow",
-): Promise<void> {
-	const worksp
-…[truncated]
-# note: truncated to stay within per-file budget
-
-===== messageEnhancer.ts =====
-import { ProviderSettings, ClineMessage, GlobalState, TelemetryEventName } from "@roo-code/types"
-import { TelemetryService } from "@roo-code/telemetry"
-import { supportPrompt } from "../../shared/support-prompt"
-import { singleCompletionHandler } from "../../utils/single-completion-handler"
-import { ProviderSettingsManager } from "../config/ProviderSettingsManager"
-import { ClineProvider } from "./ClineProvider"
-
-export interface MessageEnhancerOptions {
-	text: string
-	apiConfiguration: ProviderSettings
-	customSupportPrompts?: Record<string, any>
-	listApiConfigMeta: Array<{ id: string; name?: string }>
-	enhancementApiConfigId?: string
-	includeTaskHistoryInEnhance?: boolean
-	currentClineMessages?: ClineMessage[]
-	providerSettingsManager: ProviderSettingsManager
-}
-
-export interface MessageEnhancerResult {
-	success: boolean
-	enhancedText?: string
-	error?: string
-}
-
-/**
- * Enhances a message prompt using AI, optionally including task history for context
- */
-export class MessageEnhancer {
-	/**
-	 * Enhances a message prompt using the configured AI provider
-	 * @param options Configuration options for message enhancement
-	 * @returns Enhanced message result with success status
-	 */
-	static async enhanceMessage(options: MessageEnhancerOptions): Promise<MessageEnhancerResult> {
-		try {
-			const {
-				text,
-				apiConfiguration,
-				customSupportPrompts,
-				listApiConfigMeta,
-				enhancementApiConfigId,
-				includeTaskHistoryInEnhance,
-				currentClineMessages,
-				providerSettingsManager,
-			} = options
-
-			// Determine which API configuration to use
-			let configToUse: ProviderSettings = apiConfiguration
-
-			// Try to get enhancement config first, fall back to current config
-			if (enhancementApiConfigId && listApiConfigMeta.find(({ id }) => id === enhancementApiConfigId)) {
-				const { name: _, ...providerSettings } = await providerSettingsManager.getProfile({
-					id: enhancementApiConfigId,
-				})
-
-				if (providerSettings.apiProvider) {
-					configToUse = providerSettings
+// Lines 3949-3954
+			try {
+				if (!message.payload) {
+					throw new Error("No payload provided for supervisor:result")
 				}
-			}
-
-			// Prepare the prompt to enhance
-			let promptToEnhance = text
-
-			// Include task history if enabled and available
-			if (includeTaskHistoryInEnhance && currentClineMessages && currentClineMessages.length > 0) {
-				const taskHistory = this.extractTaskHistory(currentClineMessages)
-				if (taskHistory) {
-					promptToEnhance = `${text}\n\nUse the following previous conversation context as needed:\n${taskHistory}`
-				}
-			}
-
-			// Create the enhancement prompt using the support prompt system
-			const enhancementPrompt = supportPrompt.create(
-				"ENHANCE",
-				{ userInput: promptToEnhance },
-				customSupportPrompts,
-			)
-
-			// Call the single completion handler to get the enhanced prompt
-			const enhancedText = await singleCompletionHandler(configToUse, enhancementPrompt)
-
-			return {
-				success: true,
-				enhancedText,
-			}
-		} catch (error) {
-			return {
-				success: false,
-				error: error instanceof Error ? error.message : String(error),
-			}
-		}
-	}
-
-	/**
-	 * Extracts relevant task history from Cline messages for context
-	 * @param messages Array of Cline messages
-	 * @returns Formatted task history string
-	 */
-	private static extractTaskHistory(messages: ClineMessage[]): string {
-		try {
-			const relevantMessages = messages
-				.filter((msg) => {
-					// Include user messages (type: "ask" with text) and assistant messages (type: "say" with say: "text")
-					if (msg.type === "ask" && msg.text) {
-						return true
-					}
-					if (msg.type === "say" && msg.say === "text" && msg.text) {
-						return true
-					}
-					return false
-				})
-				.slice(-10) // Limit to last 10 messages to avoid context explosion
-
-			return relevantMessages
-				.map((msg) => {
-					const role = msg.type === "ask" ? "User" : "Assistant"
-					const content = msg.text || ""
-					// Truncate long messages
-					return `${role}: ${content.slice(0, 500)}${content.length > 500 ? "..." : ""}`
-				})
-				.join("\n")
-		} catch (error) {
-			// Log error but don't fail the enha
-…[truncated]
-# note: truncated to stay within per-file budget
-
-===== webviewMessageHandler.ts =====
-import { safeWriteJson } from "../../utils/safeWriteJson"
-import * as path from "path"
-import * as os from "os"
-import * as fs from "fs/promises"
-import * as crypto from "crypto"
-import pWaitFor from "p-wait-for"
-import * as vscode from "vscode"
-// kilocode_change start
-import axios from "axios"
-import { getKiloUrlFromToken, isGlobalStateKey } from "@roo-code/types"
-import { getAppUrl } from "@roo-code/types"
-import {
-	MaybeTypedWebviewMessage,
-	ProfileData,
-	SeeNewChangesPayload,
-	TaskHistoryRequestPayload,
-	TasksByIdRequestPayload,
-	UpdateGlobalStateMessage,
-} from "../../shared/WebviewMessage"
-import { EditUnsuccessfulMessage } from "../../shared/ExtensionMessage"
-// kilocode_change end
-
-import {
-	type Language,
-	type GlobalState,
-	type ClineMessage,
-	type TelemetrySetting,
-	TelemetryEventName,
-	// kilocode_change start
-	ghostServiceSettingsSchema,
-	fastApplyModelSchema,
-	// kilocode_change end
-	UserSettingsConfig,
-} from "@roo-code/types"
-import { CloudService } from "@roo-code/cloud"
-import { TelemetryService } from "@roo-code/telemetry"
-
-import { type ApiMessage } from "../task-persistence/apiMessages"
-import { saveTaskMessages } from "../task-persistence"
-
-import { ClineProvider } from "./ClineProvider"
-import { handleCheckpointRestoreOperation } from "./checkpointRestoreHandler"
-import { changeLanguage, t } from "../../i18n"
-import { Package } from "../../shared/package"
-import { type RouterName, type ModelRecord, toRouterName } from "../../shared/api"
-import { MessageEnhancer } from "./messageEnhancer"
-
-import {
-	type WebviewMessage,
-	type EditQueuedMessagePayload,
-	checkoutDiffPayloadSchema,
-	checkoutRestorePayloadSchema,
-	requestCheckpointRestoreApprovalPayloadSchema,
-} from "../../shared/WebviewMessage"
-import { checkExistKey } from "../../shared/checkExistApiConfig"
-import { experimentDefault } from "../../shared/experiments"
-import { Terminal } from "../../integrations/terminal/Terminal"
-import { openFile } from "../../integrations/misc/open-file"
-import { openImage, saveImage } from "../../integrations/misc/image-handler"
-import { selectImages } from "../../integrations/misc/process-images"
-import { getTheme } from "../../integrations/theme/getTheme"
-import { discoverChromeHostUrl, tryChromeHostUrl } from "../../services/browser/browserDiscovery"
-import { searchWorkspaceFiles } from "../../services/search/file-search"
-import { fileExistsAtPath } from "../../utils/fs"
-import { playTts, setTtsEnabled, setTtsSpeed, stopTts } from "../../utils/tts"
-import { showSystemNotification } from "../../integrations/notifications" // kilocode_change
-import { singleCompletionHandler } from "../../utils/single-completion-handler" // kilocode_change
-import { searchCommits } from "../../utils/git"
-import { exportSettings, importSettingsWithFeedback } from "../config/importExport"
-import { getOpenAiModels } from "../../api/providers/openai"
-import { getVsCodeLmModels } from "../../api/providers/vscode-lm"
-import { openMention } from "../mentions"
-import { getWorkspacePath } from "../../utils/path"
-import { Mode, defaultModeSlug } from "../../shared/modes"
-import { getModels, flushModels } from "../../api/providers/fetchers/modelCache"
-import { GetModelsOptions } from "../../shared/api"
-import { generateSystemPrompt } from "./generateSystemPrompt"
-import { getCommand } from "../../utils/commands"
-import { toggleWorkflow, toggleRule, createRuleFile, deleteRuleFile } from "./kilorules"
-import { mermaidFixPrompt } from "../prompts/utilities/mermaid" // kilocode_change
-import { editMessageHandler, fetchKilocodeNotificationsHandler } from "../kilocode/webview/webviewMessageHandlerUtils" // kilocode_change
-
-const ALLOWED_VSCODE_SETTINGS = new Set(["terminal.integrated.inheritEnv"])
-
-import { MarketplaceManager, MarketplaceItemType } from "../../services/marketplace"
-import { setPendingTodoList } from "../tools/updateTodoListTool"
-import { UsageTracker } from "../../utils/usage-tracker"
-import { seeNewChanges } from "../checkpoints/kiloc
-…[truncated]
-# note: truncated to stay within per-file budget
-
-===== __tests__/ClineProvider.kilocode-organization.spec.ts =====
-// kilocode_change - new file
-// npx vitest core/webview/__tests__/ClineProvider.kilocode-organization.spec.ts
-
-import { setupCommonMocks, setupProvider, createMockWebviewView } from "../../../__tests__/common-mocks"
-
-// Setup all mocks before any imports
-setupCommonMocks()
-
-describe("ClineProvider", () => {
-	let provider: any
-	let mockWebviewView: any
-
-	beforeEach(() => {
-		vi.clearAllMocks()
-		const setup = setupProvider()
-		provider = setup.provider
-		mockWebviewView = createMockWebviewView()
-	})
-
-	describe("kilocodeOrganizationId", () => {
-		test("preserves kilocodeOrganizationId when no previous token exists", async () => {
-			await provider.resolveWebviewView(mockWebviewView)
-			const messageHandler = (mockWebviewView.webview.onDidReceiveMessage as any).mock.calls[0][0]
-
-			const mockUpsertProviderProfile = vi.fn()
-			;(provider as any).upsertProviderProfile = mockUpsertProviderProfile
-			;(provider as any).providerSettingsManager = {
-				getProfile: vi.fn().mockResolvedValue({
-					// Simulate saved config with NO kilocodeToken (common case)
-					name: "test-config",
-					apiProvider: "anthropic",
-					apiKey: "test-key",
-					id: "test-id",
-				}),
-			} as any
-
-			await messageHandler({
-				type: "upsertApiConfiguration",
-				text: "test-config",
-				apiConfiguration: {
-					apiProvider: "anthropic" as const,
-					apiKey: "test-key",
-					kilocodeToken: "test-kilo-token",
-					kilocodeOrganizationId: "org-123",
-				},
-			})
-
-			expect(mockUpsertProviderProfile).toHaveBeenCalledWith(
-				"test-config",
-				expect.objectContaining({
-					kilocodeToken: "test-kilo-token",
-					kilocodeOrganizationId: "org-123", // Should be preserved
-				}),
-			)
-		})
-
-		test("clears kilocodeOrganizationId when token actually changes", async () => {
-			await provider.resolveWebviewView(mockWebviewView)
-			const messageHandler = (mockWebviewView.webview.onDidReceiveMessage as any).mock.calls[0][0]
-
-			const mockUpsertProviderProfile = vi.fn()
-			;(provider as any).upsertProviderProfile = mockUpsertProviderProfile
-			;(provider as any).providerSettingsManager = {
-				getProfile: vi.fn().mockResolvedValue({
-					// Simulate saved config with DIFFERENT kilocodeToken
-					name: "test-config",
-					apiProvider: "anthropic",
-					apiKey: "test-key",
-					kilocodeToken: "old-kilo-token",
-					id: "test-id",
-				}),
-			} as any
-
-			await messageHandler({
-				type: "upsertApiConfiguration",
-				text: "test-config",
-				apiConfiguration: {
-					apiProvider: "anthropic" as const,
-					apiKey: "test-key",
-					kilocodeToken: "new-kilo-token", // Different token
-					kilocodeOrganizationId: "org-123",
-				},
-			})
-
-			// Verify the organization ID was cleared for security
-			expect(mockUpsertProviderProfile).toHaveBeenCalledWith(
-				"test-config",
-				expect.objectContaining({
-					kilocodeToken: "new-kilo-token",
-					kilocodeOrganizationId: undefined, // Should be cleared
-				}),
-			)
-		})
-	})
-})
-
-===== __tests__/ClineProvider.spec.ts =====
-// npx vitest core/webview/__tests__/ClineProvider.spec.ts
-
-import Anthropic from "@anthropic-ai/sdk"
-import * as vscode from "vscode"
-import axios from "axios"
-
-import {
-	type ProviderSettingsEntry,
-	type ClineMessage,
-	openRouterDefaultModelId,
-	ORGANIZATION_ALLOW_ALL,
-} from "@roo-code/types" // kilocode_change: openRouterDefaultModelId
-import { TelemetryService } from "@roo-code/telemetry"
-
-import { ExtensionMessage, ExtensionState } from "../../../shared/ExtensionMessage"
-import { defaultModeSlug } from "../../../shared/modes"
-import { experimentDefault } from "../../../shared/experiments"
-import { setTtsEnabled } from "../../../utils/tts"
-import { ContextProxy } from "../../config/ContextProxy"
-import { Task, TaskOptions } from "../../task/Task"
-import { safeWriteJson } from "../../../utils/safeWriteJson"
-
-import { ClineProvider } from "../ClineProvider"
-
-// Mock setup must come before imports.
-vi.mock("../../prompts/sections/custom-instructions")
-
-vi.mock("p-wait-for", () => ({
-	__esModule: true,
-	default: vi.fn().mockResolvedValue(undefined),
-}))
-
-vi.mock("fs/promises", () => ({
-	mkdir: vi.fn().mockResolvedValue(undefined),
-	writeFile: vi.fn().mockResolvedValue(undefined),
-	readFile: vi.fn().mockResolvedValue(""),
-	unlink: vi.fn().mockResolvedValue(undefined),
-	rmdir: vi.fn().mockResolvedValue(undefined),
-}))
-
-vi.mock("axios", () => ({
-	default: {
-		get: vi.fn().mockResolvedValue({ data: { data: [] } }),
-		post: vi.fn(),
-	},
-	get: vi.fn().mockResolvedValue({ data: { data: [] } }),
-	post: vi.fn(),
-}))
-
-vi.mock("../../../utils/safeWriteJson")
-
-vi.mock("../../../utils/storage", () => ({
-	getSettingsDirectoryPath: vi.fn().mockResolvedValue("/test/settings/path"),
-	getTaskDirectoryPath: vi.fn().mockResolvedValue("/test/task/path"),
-	getGlobalStoragePath: vi.fn().mockResolvedValue("/test/storage/path"),
-}))
-
-vi.mock("@modelcontextprotocol/sdk/types.js", () => ({
-	CallToolResultSchema: {},
-	ListResourcesResultSchema: {},
-	ListResourceTemplatesResultSchema: {},
-	ListToolsResultSchema: {},
-	ReadResourceResultSchema: {},
-	ErrorCode: {
-		InvalidRequest: "InvalidRequest",
-		MethodNotFound: "MethodNotFound",
-		InternalError: "InternalError",
-	},
-	McpError: class McpError extends Error {
-		code: string
-		constructor(code: string, message: string) {
-			super(message)
-			this.code = code
-			this.name = "McpError"
-		}
-	},
-}))
-
-vi.mock("../../../services/browser/BrowserSession", () => ({
-	BrowserSession: vi.fn().mockImplementation(() => ({
-		testConnection: vi.fn().mockImplementation(async (url) => {
-			if (url === "http://localhost:9222") {
-				return {
-					success: true,
-					message: "Successfully connected to Chrome",
-					endpoint: "ws://localhost:9222/devtools/browser/123",
-				}
-			} else {
-				return {
-					success: false,
-					message: "Failed to connect to Chrome",
-					endpoint: undefined,
-				}
-			}
-		}),
-	})),
-}))
-
-vi.mock("../../../services/browser/browserDiscovery", () => ({
-	discoverChromeHostUrl: vi.fn().mockResolvedValue("http://localhost:9222"),
-	tryChromeHostUrl: vi.fn().mockImplementation(async (url) => {
-		return url === "http://localhost:9222"
-	}),
-	testBrowserConnection: vi.fn(),
-}))
-
-// Remove duplicate mock - it's already defined below.
-
-const mockAddCustomInstructions = vi.fn().mockResolvedValue("Combined instructions")
-
-;(vi.mocked(await import("../../prompts/sections/custom-instructions")) as any).addCustomInstructions =
-	mockAddCustomInstructions
-
-vi.mock("delay", () => {
-	const delayFn = (_ms: number) => Promise.resolve()
-	delayFn.createDelay = () => delayFn
-	delayFn.reject = () => Promise.reject(new Error("Delay rejected"))
-	delayFn.range = () => Promise.resolve()
-	return { default: delayFn }
-})
-
-// MCP-related modules are mocked once above (lines 87-109).
-
-vi.mock("@modelcontextprotocol/sdk/client/index.js", () => ({
-	Client: vi.fn().mockImplementation(() => ({
-		connect: vi.fn().mockResolvedValue(undefined),
-		close: vi.fn().mockResolvedValue(undefined),
-		listTools: vi.fn().mockResolvedValue({ tools:
-…[truncated]
-# note: truncated to stay within per-file budget
-
-===== __tests__/ClineProvider.sticky-mode.spec.ts =====
-// npx vitest core/webview/__tests__/ClineProvider.sticky-mode.spec.ts
-
-import * as vscode from "vscode"
-import { TelemetryService } from "@roo-code/telemetry"
-import { ClineProvider } from "../ClineProvider"
-import { ContextProxy } from "../../config/ContextProxy"
-import { Task } from "../../task/Task"
-import type { HistoryItem, ProviderName } from "@roo-code/types"
-
-vi.mock("vscode", () => ({
-	ExtensionContext: vi.fn(),
-	OutputChannel: vi.fn(),
-	WebviewView: vi.fn(),
-	Uri: {
-		joinPath: vi.fn(),
-		file: vi.fn(),
-	},
-	CodeActionKind: {
-		QuickFix: { value: "quickfix" },
-		RefactorRewrite: { value: "refactor.rewrite" },
-	},
-	commands: {
-		executeCommand: vi.fn().mockResolvedValue(undefined),
-	},
-	window: {
-		showInformationMessage: vi.fn(),
-		showWarningMessage: vi.fn(),
-		showErrorMessage: vi.fn(),
-		onDidChangeActiveTextEditor: vi.fn(() => ({ dispose: vi.fn() })),
-		createTextEditorDecorationType: vi.fn(() => ({ dispose: vi.fn() })), // kilocode_change
-	},
-	workspace: {
-		getConfiguration: vi.fn().mockReturnValue({
-			get: vi.fn().mockReturnValue([]),
-			update: vi.fn(),
-		}),
-		onDidChangeConfiguration: vi.fn().mockImplementation(() => ({
-			dispose: vi.fn(),
-		})),
-		onDidSaveTextDocument: vi.fn(() => ({ dispose: vi.fn() })),
-		onDidChangeTextDocument: vi.fn(() => ({ dispose: vi.fn() })),
-		onDidOpenTextDocument: vi.fn(() => ({ dispose: vi.fn() })),
-		onDidCloseTextDocument: vi.fn(() => ({ dispose: vi.fn() })),
-	},
-	env: {
-		uriScheme: "vscode",
-		language: "en",
-		appName: "Visual Studio Code",
-		uiKind: 1, // Desktop
-	},
-	ExtensionMode: {
-		Production: 1,
-		Development: 2,
-		Test: 3,
-	},
-	UIKind: {
-		1: "Desktop",
-		2: "Web",
-		Desktop: 1,
-		Web: 2,
-	},
-	version: "1.85.0",
-}))
-
-// Create a counter for unique task IDs.
-let taskIdCounter = 0
-
-vi.mock("../../task/Task", () => ({
-	Task: vi.fn().mockImplementation((options) => ({
-		taskId: options.taskId || `test-task-id-${++taskIdCounter}`,
-		saveClineMessages: vi.fn(),
-		clineMessages: [],
-		apiConversationHistory: [],
-		overwriteClineMessages: vi.fn(),
-		overwriteApiConversationHistory: vi.fn(),
-		abortTask: vi.fn(),
-		handleWebviewAskResponse: vi.fn(),
-		getTaskNumber: vi.fn().mockReturnValue(0),
-		setTaskNumber: vi.fn(),
-		setParentTask: vi.fn(),
-		setRootTask: vi.fn(),
-		emit: vi.fn(),
-		parentTask: options.parentTask,
-	})),
-}))
-
-vi.mock("../../prompts/sections/custom-instructions")
-
-vi.mock("../../../utils/safeWriteJson")
-
-vi.mock("../../../api", () => ({
-	buildApiHandler: vi.fn().mockReturnValue({
-		getModel: vi.fn().mockReturnValue({
-			id: "claude-3-sonnet",
-			info: { supportsComputerUse: false },
-		}),
-	}),
-}))
-
-vi.mock("../../../integrations/workspace/WorkspaceTracker", () => ({
-	default: vi.fn().mockImplementation(() => ({
-		initializeFilePaths: vi.fn(),
-		dispose: vi.fn(),
-	})),
-}))
-
-vi.mock("../../diff/strategies/multi-search-replace", () => ({
-	MultiSearchReplaceDiffStrategy: vi.fn().mockImplementation(() => ({
-		getToolDescription: () => "test",
-		getName: () => "test-strategy",
-		applyDiff: vi.fn(),
-	})),
-}))
-
-vi.mock("@roo-code/cloud", () => ({
-	CloudService: {
-		hasInstance: vi.fn().mockReturnValue(true),
-		get instance() {
-			return {
-				isAuthenticated: vi.fn().mockReturnValue(false),
-			}
-		},
-	},
-	BridgeOrchestrator: {
-		isEnabled: vi.fn().mockReturnValue(false),
-	},
-	getRooCodeApiUrl: vi.fn().mockReturnValue("https://app.roocode.com"),
-}))
-
-vi.mock("../../../shared/modes", () => ({
-	modes: [
-		{
-			slug: "code",
-			name: "Code Mode",
-			roleDefinition: "You are a code assistant",
-			groups: ["read", "edit", "browser"],
-		},
-		{
-			slug: "architect",
-			name: "Architect Mode",
-			roleDefinition: "You are an architect",
-			groups: ["read", "edit"],
-		},
-	],
-	getModeBySlug: vi.fn().mockReturnValue({
-		slug: "code",
-		name: "Code Mode",
-		roleDefinition: "You are a code assistant",
-		groups: ["read", "edit", "browser"],
-	}),
-	defaultModeSlug: "code",
-}))
-
-vi.mock("../../prompts/system", () => ({
-	SYSTEM_PROMPT: vi.fn().mockResolvedValue("mocked system 
-…[truncated]
-# note: truncated to stay within per-file budget
-
-===== __tests__/checkpointRestoreHandler.spec.ts =====
-import { describe, it, expect, vi, beforeEach } from "vitest"
-import { handleCheckpointRestoreOperation } from "../checkpointRestoreHandler"
-import { saveTaskMessages } from "../../task-persistence"
-import pWaitFor from "p-wait-for"
-import * as vscode from "vscode"
-
-// Mock dependencies
-vi.mock("../../task-persistence", () => ({
-	saveTaskMessages: vi.fn(),
-}))
-vi.mock("p-wait-for")
-vi.mock("vscode", () => ({
-	window: {
-		showErrorMessage: vi.fn(),
-	},
-}))
-
-describe("checkpointRestoreHandler", () => {
-	let mockProvider: any
-	let mockCline: any
-
-	beforeEach(() => {
-		vi.clearAllMocks()
-
-		// Setup mock Cline instance
-		mockCline = {
-			taskId: "test-task-123",
-			abort: false,
-			abortTask: vi.fn(() => {
-				mockCline.abort = true
-			}),
-			checkpointRestore: vi.fn(),
-			clineMessages: [
-				{ ts: 1, type: "user", say: "user", text: "First message" },
-				{ ts: 2, type: "assistant", say: "assistant", text: "Response" },
-				{
-					ts: 3,
-					type: "user",
-					say: "user",
-					text: "Checkpoint message",
-					checkpoint: { hash: "abc123" },
-				},
-				{ ts: 4, type: "assistant", say: "assistant", text: "After checkpoint" },
-			],
-		}
-
-		// Setup mock provider
-		mockProvider = {
-			getCurrentTask: vi.fn(() => mockCline),
-			postMessageToWebview: vi.fn(),
-			getTaskWithId: vi.fn(() => ({
-				historyItem: { id: "test-task-123", messages: mockCline.clineMessages },
-			})),
-			createTaskWithHistoryItem: vi.fn(),
-			setPendingEditOperation: vi.fn(),
-			contextProxy: {
-				globalStorageUri: { fsPath: "/test/storage" },
-			},
-		}
-
-		// Mock pWaitFor to resolve immediately
-		;(pWaitFor as any).mockImplementation(async (condition: () => boolean) => {
-			// Simulate the condition being met
-			return Promise.resolve()
-		})
-	})
-
-	describe("handleCheckpointRestoreOperation", () => {
-		it("should abort task before checkpoint restore for delete operations", async () => {
-			// Simulate a task that hasn't been aborted yet
-			mockCline.abort = false
-
-			await handleCheckpointRestoreOperation({
-				provider: mockProvider,
-				currentCline: mockCline,
-				messageTs: 3,
-				messageIndex: 2,
-				checkpoint: { hash: "abc123" },
-				operation: "delete",
-			})
-
-			// Verify abortTask was called before checkpointRestore
-			expect(mockCline.abortTask).toHaveBeenCalled()
-			expect(mockCline.checkpointRestore).toHaveBeenCalled()
-
-			// Verify the order of operations
-			const abortOrder = mockCline.abortTask.mock.invocationCallOrder[0]
-			const restoreOrder = mockCline.checkpointRestore.mock.invocationCallOrder[0]
-			expect(abortOrder).toBeLessThan(restoreOrder)
-		})
-
-		it("should not abort task if already aborted", async () => {
-			// Simulate a task that's already aborted
-			mockCline.abort = true
-
-			await handleCheckpointRestoreOperation({
-				provider: mockProvider,
-				currentCline: mockCline,
-				messageTs: 3,
-				messageIndex: 2,
-				checkpoint: { hash: "abc123" },
-				operation: "delete",
-			})
-
-			// Verify abortTask was not called
-			expect(mockCline.abortTask).not.toHaveBeenCalled()
-			expect(mockCline.checkpointRestore).toHaveBeenCalled()
-		})
-
-		it("should handle edit operations with pending edit data", async () => {
-			const editData = {
-				editedContent: "Edited content",
-				images: ["image1.png"],
-				apiConversationHistoryIndex: 2,
-			}
-
-			await handleCheckpointRestoreOperation({
-				provider: mockProvider,
-				currentCline: mockCline,
-				messageTs: 3,
-				messageIndex: 2,
-				checkpoint: { hash: "abc123" },
-				operation: "edit",
-				editData,
-			})
-
-			// Verify abortTask was NOT called for edit operations
-			expect(mockCline.abortTask).not.toHaveBeenCalled()
-
-			// Verify pending edit operation was set
-			expect(mockProvider.setPendingEditOperation).toHaveBeenCalledWith("task-test-task-123", {
-				messageTs: 3,
-				editedContent: "Edited content",
-				images: ["image1.png"],
-				messageIndex: 2,
-				apiConversationHistoryIndex: 2,
-			})
-
-			// Verify checkpoint restore was called with edit operation
-			expect(mockCline.checkpointR
-…[truncated]
-# note: truncated to stay within per-file budget
-
-===== __tests__/messageEnhancer.test.ts =====
-import { ProviderSettings, ClineMessage } from "@roo-code/types"
-import { TelemetryService } from "@roo-code/telemetry"
-
-import { MessageEnhancer } from "../messageEnhancer"
-import * as singleCompletionHandlerModule from "../../../utils/single-completion-handler"
-import { ProviderSettingsManager } from "../../config/ProviderSettingsManager"
-
-// Mock dependencies
-vi.mock("../../../utils/single-completion-handler")
-vi.mock("@roo-code/telemetry")
-
-describe("MessageEnhancer", () => {
-	let mockProviderSettingsManager: ProviderSettingsManager
-	let mockSingleCompletionHandler: ReturnType<typeof vi.fn>
-
-	const mockApiConfiguration: ProviderSettings = {
-		apiProvider: "openai",
-		apiKey: "test-key",
-		apiModelId: "gpt-4",
-	}
-
-	const mockListApiConfigMeta = [
-		{ id: "config1", name: "Config 1" },
-		{ id: "config2", name: "Config 2" },
-	]
-
-	beforeEach(() => {
-		// Reset all mocks
-		vi.clearAllMocks()
-
-		// Mock provider settings manager
-		mockProviderSettingsManager = {
-			getProfile: vi.fn().mockResolvedValue({
-				name: "Enhancement Config",
-				apiProvider: "anthropic",
-				apiKey: "enhancement-key",
-				apiModelId: "claude-3",
-			}),
-		} as any
-
-		// Mock single completion handler
-		mockSingleCompletionHandler = vi.fn().mockResolvedValue("Enhanced prompt text")
-		vi.mocked(singleCompletionHandlerModule).singleCompletionHandler = mockSingleCompletionHandler
-
-		// Mock TelemetryService
-		vi.mocked(TelemetryService).hasInstance = vi.fn().mockReturnValue(true)
-		// Mock the instance getter
-		Object.defineProperty(TelemetryService, "instance", {
-			get: vi.fn().mockReturnValue({
-				capturePromptEnhanced: vi.fn(),
-			}),
-			configurable: true,
-		})
-	})
-
-	afterEach(() => {
-		vi.restoreAllMocks()
-	})
-
-	describe("enhanceMessage", () => {
-		it("should enhance a simple message successfully", async () => {
-			const result = await MessageEnhancer.enhanceMessage({
-				text: "Write a function to calculate fibonacci",
-				apiConfiguration: mockApiConfiguration,
-				listApiConfigMeta: mockListApiConfigMeta,
-				providerSettingsManager: mockProviderSettingsManager,
-			})
-
-			expect(result.success).toBe(true)
-			expect(result.enhancedText).toBe("Enhanced prompt text")
-			expect(result.error).toBeUndefined()
-
-			// Verify single completion handler was called with correct prompt
-			expect(mockSingleCompletionHandler).toHaveBeenCalledWith(
-				mockApiConfiguration,
-				expect.stringContaining("Write a function to calculate fibonacci"),
-			)
-		})
-
-		it("should use enhancement API config when provided", async () => {
-			const result = await MessageEnhancer.enhanceMessage({
-				text: "Test prompt",
-				apiConfiguration: mockApiConfiguration,
-				customSupportPrompts: {},
-				listApiConfigMeta: mockListApiConfigMeta,
-				enhancementApiConfigId: "config2",
-				providerSettingsManager: mockProviderSettingsManager,
-			})
-
-			expect(result.success).toBe(true)
-			expect(mockProviderSettingsManager.getProfile).toHaveBeenCalledWith({ id: "config2" })
-
-			// Verify the enhancement config was used instead of default
-			const expectedConfig = {
-				apiProvider: "anthropic",
-				apiKey: "enhancement-key",
-				apiModelId: "claude-3",
-			}
-			expect(mockSingleCompletionHandler).toHaveBeenCalledWith(expectedConfig, expect.any(String))
-		})
-
-		it("should include task history when enabled", async () => {
-			const mockClineMessages: ClineMessage[] = [
-				{ type: "ask", text: "Create a React component", ts: 1000 },
-				{ type: "say", say: "text", text: "I'll create a React component for you", ts: 2000 },
-				{ type: "ask", text: "Add props to the component", ts: 3000 },
-				{ type: "say", say: "reasoning", text: "Using tool", ts: 4000 }, // Should be filtered out
-			]
-
-			const result = await MessageEnhancer.enhanceMessage({
-				text: "Improve the component",
-				apiConfiguration: mockApiConfiguration,
-				listApiConfigMeta: mockListApiConfigMeta,
-				includeTaskHistoryInEnhance: true,
-				currentClineMessages: mockClineMessages,
-				providerSettingsManager: mockProviderSe
-…[truncated]
-# note: truncated to stay within per-file budget
-
-===== __tests__/telemetrySettingsTracking.spec.ts =====
-import { describe, it, expect, vi, beforeEach } from "vitest"
-import { TelemetryService } from "@roo-code/telemetry"
-import { TelemetryEventName, type TelemetrySetting } from "@roo-code/types"
-
-describe("Telemetry Settings Tracking", () => {
-	let mockTelemetryService: {
-		captureTelemetrySettingsChanged: ReturnType<typeof vi.fn>
-		updateTelemetryState: ReturnType<typeof vi.fn>
-		hasInstance: ReturnType<typeof vi.fn>
-	}
-
-	beforeEach(() => {
-		// Reset mocks
-		vi.clearAllMocks()
-
-		// Create mock service
-		mockTelemetryService = {
-			captureTelemetrySettingsChanged: vi.fn(),
-			updateTelemetryState: vi.fn(),
-			hasInstance: vi.fn().mockReturnValue(true),
-		}
-
-		// Mock the TelemetryService
-		vi.spyOn(TelemetryService, "hasInstance").mockReturnValue(true)
-		vi.spyOn(TelemetryService, "instance", "get").mockReturnValue(mockTelemetryService as any)
-	})
-
-	describe("when telemetry is turned OFF", () => {
-		it("should fire event BEFORE disabling telemetry", () => {
-			const previousSetting = "enabled" as TelemetrySetting
-			const newSetting = "disabled" as TelemetrySetting
-
-			// Simulate the logic from webviewMessageHandler
-			const isOptedIn = newSetting !== "disabled"
-			const wasPreviouslyOptedIn = previousSetting !== "disabled"
-
-			// If turning telemetry OFF, fire event BEFORE disabling
-			if (wasPreviouslyOptedIn && !isOptedIn && TelemetryService.hasInstance()) {
-				TelemetryService.instance.captureTelemetrySettingsChanged(previousSetting, newSetting)
-			}
-
-			// Update the telemetry state
-			TelemetryService.instance.updateTelemetryState(isOptedIn)
-
-			// Verify the event was captured before updateTelemetryState
-			expect(mockTelemetryService.captureTelemetrySettingsChanged).toHaveBeenCalledWith("enabled", "disabled")
-			expect(mockTelemetryService.captureTelemetrySettingsChanged).toHaveBeenCalledBefore(
-				mockTelemetryService.updateTelemetryState as any,
-			)
-			expect(mockTelemetryService.updateTelemetryState).toHaveBeenCalledWith(false)
-		})
-
-		it("should fire event when going from unset to disabled", () => {
-			const previousSetting = "unset" as TelemetrySetting
-			const newSetting = "disabled" as TelemetrySetting
-
-			const isOptedIn = newSetting !== "disabled"
-			const wasPreviouslyOptedIn = previousSetting !== "disabled"
-
-			if (wasPreviouslyOptedIn && !isOptedIn && TelemetryService.hasInstance()) {
-				TelemetryService.instance.captureTelemetrySettingsChanged(previousSetting, newSetting)
-			}
-
-			TelemetryService.instance.updateTelemetryState(isOptedIn)
-
-			expect(mockTelemetryService.captureTelemetrySettingsChanged).toHaveBeenCalledWith("unset", "disabled")
-		})
-	})
-
-	describe("when telemetry is turned ON", () => {
-		it("should fire event AFTER enabling telemetry", () => {
-			const previousSetting = "disabled" as TelemetrySetting
-			const newSetting = "enabled" as TelemetrySetting
-
-			const isOptedIn = newSetting !== "disabled"
-			const wasPreviouslyOptedIn = previousSetting !== "disabled"
-
-			// Update the telemetry state first
-			TelemetryService.instance.updateTelemetryState(isOptedIn)
-
-			// If turning telemetry ON, fire event AFTER enabling
-			if (!wasPreviouslyOptedIn && isOptedIn && TelemetryService.hasInstance()) {
-				TelemetryService.instance.captureTelemetrySettingsChanged(previousSetting, newSetting)
-			}
-
-			// Verify the event was captured after updateTelemetryState
-			expect(mockTelemetryService.updateTelemetryState).toHaveBeenCalledWith(true)
-			expect(mockTelemetryService.captureTelemetrySettingsChanged).toHaveBeenCalledWith("disabled", "enabled")
-			expect(mockTelemetryService.updateTelemetryState).toHaveBeenCalledBefore(
-				mockTelemetryService.captureTelemetrySettingsChanged as any,
-			)
-		})
-
-		it("should not fire event when going from enabled to enabled", () => {
-			const previousSetting = "enabled" as TelemetrySetting
-			const newSetting = "enabled" as TelemetrySetting
-
-			const isOptedIn = newSetting !== "disabled"
-			const wasPreviouslyOptedIn = previousSetting !== "disabled"
-
-			// Neithe
-…[truncated]
-# note: truncated to stay within per-file budget
-
-===== __tests__/webviewMessageHandler.autoSwitch.spec.ts =====
-import type { Mock } from "vitest"
-import { describe, it, expect, vi, beforeEach } from "vitest"
-import axios from "axios"
-
-// Mock dependencies first
-vi.mock("vscode", () => ({
-	window: {
-		showWarningMessage: vi.fn(),
-		showErrorMessage: vi.fn(),
-		showInformationMessage: vi.fn(),
-		createTextEditorDecorationType: vi.fn(() => ({
-			dispose: vi.fn(),
-		})),
-	},
-	workspace: {
-		workspaceFolders: [{ uri: { fsPath: "/mock/workspace" } }],
-		getConfiguration: vi.fn().mockReturnValue({
-			get: vi.fn(),
-			update: vi.fn(),
-		}),
-	},
-	Uri: {
-		file: vi.fn((path) => ({ fsPath: path })),
-		parse: vi.fn((path) => ({ fsPath: path })),
-	},
-	env: {
-		uriScheme: "vscode",
-		openExternal: vi.fn(),
-	},
-	commands: {
-		executeCommand: vi.fn(),
-	},
-}))
-
-vi.mock("axios")
-
-vi.mock("../../task-persistence", () => ({
-	saveTaskMessages: vi.fn(),
-}))
-
-vi.mock("../../../api/providers/fetchers/modelCache", () => ({
-	getModels: vi.fn(),
-	flushModels: vi.fn(),
-}))
-
-vi.mock("../../../integrations/notifications", () => ({
-	showSystemNotification: vi.fn(),
-}))
-
-vi.mock("../kiloWebviewMessgeHandlerHelpers", () => ({
-	refreshOrganizationModes: vi.fn(),
-	fetchAndRefreshOrganizationModesOnStartup: vi.fn(),
-}))
-
-vi.mock("@roo-code/cloud", () => ({
-	CloudService: {
-		instance: {
-			logout: vi.fn(),
-		},
-	},
-}))
-
-// Import after mocks
-import { webviewMessageHandler } from "../webviewMessageHandler"
-import type { ClineProvider } from "../ClineProvider"
-import { getModels, flushModels } from "../../../api/providers/fetchers/modelCache"
-import { showSystemNotification } from "../../../integrations/notifications"
-import { refreshOrganizationModes } from "../kiloWebviewMessgeHandlerHelpers"
-import { CloudService } from "@roo-code/cloud"
-
-describe("webviewMessageHandler - Automatic Organization Switching", () => {
-	let mockProvider: ClineProvider
-	let mockGetGlobalState: Mock
-	let mockUpdateGlobalState: Mock
-	let mockUpsertProviderProfile: Mock
-	let mockPostMessageToWebview: Mock
-	let mockPostStateToWebview: Mock
-	let mockLog: Mock
-	let mockProviderSettingsManager: any
-
-	beforeEach(() => {
-		vi.clearAllMocks()
-
-		// Setup mock functions
-		mockGetGlobalState = vi.fn()
-		mockUpdateGlobalState = vi.fn()
-		mockUpsertProviderProfile = vi.fn()
-		mockPostMessageToWebview = vi.fn()
-		mockPostStateToWebview = vi.fn()
-		mockLog = vi.fn()
-		mockProviderSettingsManager = {
-			getProfile: vi.fn().mockResolvedValue({}),
-		}
-
-		// Create mock provider
-		mockProvider = {
-			getState: vi.fn().mockResolvedValue({
-				apiConfiguration: {
-					kilocodeToken: "test-token",
-					kilocodeOrganizationId: undefined,
-				},
-				currentApiConfigName: "default",
-			}),
-			contextProxy: {
-				getValue: mockGetGlobalState,
-				setValue: mockUpdateGlobalState,
-				globalStorageUri: { fsPath: "/mock/storage" },
-			},
-			upsertProviderProfile: mockUpsertProviderProfile,
-			postMessageToWebview: mockPostMessageToWebview,
-			postStateToWebview: mockPostStateToWebview,
-			log: mockLog,
-			providerSettingsManager: mockProviderSettingsManager,
-		} as unknown as ClineProvider
-	})
-
-	describe("Auto-Switch Success Cases", () => {
-		it("should auto-switch to first organization on first login", async () => {
-			// Setup: User logs in with organizations, no org selected, flag not set
-			const mockProfileData = {
-				organizations: [
-					{ id: "org-1", name: "Test Org 1", balance: 100, role: "owner" },
-					{ id: "org-2", name: "Test Org 2", balance: 50, role: "member" },
-				],
-			}
-
-			mockGetGlobalState.mockImplementation((key: string) => {
-				if (key === "hasPerformedOrganizationAutoSwitch") return undefined
-				if (key === "systemNotificationsEnabled") return true
-				return undefined
-			})
-			;(axios.get as Mock).mockResolvedValueOnce({ data: mockProfileData })
-			;(getModels as Mock).mockResolvedValueOnce({ "model-1": {} })
-
-			await webviewMessageHandler(mockProvider, {
-				type: "fetchProfileDataRequest",
-			})
-
-			// Verify organization ID was set to first org (via recursive upsertApiConfiguration call
-…[truncated]
-# note: truncated to stay within per-file budget
-
-===== __tests__/webviewMessageHandler.checkpoint.spec.ts =====
-import { describe, it, expect, vi, beforeEach } from "vitest"
-import { webviewMessageHandler } from "../webviewMessageHandler"
-import { saveTaskMessages } from "../../task-persistence"
-import { handleCheckpointRestoreOperation } from "../checkpointRestoreHandler"
-
-// Mock dependencies
-vi.mock("../../task-persistence")
-vi.mock("../checkpointRestoreHandler")
-vi.mock("vscode", () => ({
-	window: {
-		showErrorMessage: vi.fn(),
-		createTextEditorDecorationType: vi.fn(() => ({
-			dispose: vi.fn(),
-		})),
-	},
-	workspace: {
-		workspaceFolders: undefined,
-	},
-}))
-// kilocode_change start
-vi.mock("../../../integrations/editor/DecorationController", () => ({
-	DecorationController: vi.fn(),
-}))
-// kilocode_change end
-
-describe("webviewMessageHandler - checkpoint operations", () => {
-	let mockProvider: any
-	let mockCline: any
-
-	beforeEach(() => {
-		vi.clearAllMocks()
-
-		// Setup mock Cline instance
-		mockCline = {
-			taskId: "test-task-123",
-			clineMessages: [
-				{ ts: 1, type: "user", say: "user", text: "First message" },
-				{ ts: 2, type: "assistant", say: "checkpoint_saved", text: "abc123" },
-				{ ts: 3, type: "user", say: "user", text: "Message to delete" },
-				{ ts: 4, type: "assistant", say: "assistant", text: "After message" },
-			],
-			apiConversationHistory: [
-				{ ts: 1, role: "user", content: [{ type: "text", text: "First message" }] },
-				{ ts: 3, role: "user", content: [{ type: "text", text: "Message to delete" }] },
-				{ ts: 4, role: "assistant", content: [{ type: "text", text: "After message" }] },
-			],
-			checkpointRestore: vi.fn(),
-			overwriteClineMessages: vi.fn(),
-			overwriteApiConversationHistory: vi.fn(),
-		}
-
-		// Setup mock provider
-		mockProvider = {
-			getCurrentTask: vi.fn(() => mockCline),
-			postMessageToWebview: vi.fn(),
-			getTaskWithId: vi.fn(() => ({
-				historyItem: { id: "test-task-123", messages: mockCline.clineMessages },
-			})),
-			createTaskWithHistoryItem: vi.fn(),
-			setPendingEditOperation: vi.fn(),
-			contextProxy: {
-				globalStorageUri: { fsPath: "/test/storage" },
-			},
-		}
-	})
-
-	describe("delete operations with checkpoint restoration", () => {
-		it("should call handleCheckpointRestoreOperation for checkpoint deletes", async () => {
-			// Mock handleCheckpointRestoreOperation
-			;(handleCheckpointRestoreOperation as any).mockResolvedValue(undefined)
-
-			// Call the handler with delete confirmation
-			await webviewMessageHandler(mockProvider, {
-				type: "deleteMessageConfirm",
-				messageTs: 1,
-				restoreCheckpoint: true,
-			})
-
-			// Verify handleCheckpointRestoreOperation was called with correct parameters
-			expect(handleCheckpointRestoreOperation).toHaveBeenCalledWith({
-				provider: mockProvider,
-				currentCline: mockCline,
-				messageTs: 1,
-				messageIndex: 0,
-				checkpoint: { hash: "abc123" },
-				operation: "delete",
-			})
-		})
-
-		it("should save messages for non-checkpoint deletes", async () => {
-			// Call the handler with delete confirmation (no checkpoint restoration)
-			await webviewMessageHandler(mockProvider, {
-				type: "deleteMessageConfirm",
-				messageTs: 2,
-				restoreCheckpoint: false,
-			})
-
-			// Verify saveTaskMessages was called
-			expect(saveTaskMessages).toHaveBeenCalledWith({
-				messages: expect.any(Array),
-				taskId: "test-task-123",
-				globalStoragePath: "/test/storage",
-			})
-
-			// Verify checkpoint restore was NOT called
-			expect(mockCline.checkpointRestore).not.toHaveBeenCalled()
-		})
-	})
-
-	describe("edit operations with checkpoint restoration", () => {
-		it("should call handleCheckpointRestoreOperation for checkpoint edits", async () => {
-			// Mock handleCheckpointRestoreOperation
-			;(handleCheckpointRestoreOperation as any).mockResolvedValue(undefined)
-
-			// Call the handler with edit confirmation
-			await webviewMessageHandler(mockProvider, {
-				type: "editMessageConfirm",
-				messageTs: 1,
-				text: "Edited checkpoint message",
-				restoreCheckpoint: true,
-			})
-
-			// Verify handleCheckpointRestoreOperation was called with correct par
-…[truncated]
-# note: truncated to stay within per-file budget
-
-===== __tests__/webviewMessageHandler.delete.spec.ts =====
-import { describe, it, expect, beforeEach, vi } from "vitest"
-import { webviewMessageHandler } from "../webviewMessageHandler"
-import * as vscode from "vscode"
-import { ClineProvider } from "../ClineProvider"
-
-// Mock the saveTaskMessages function
-vi.mock("../../task-persistence", () => ({
-	saveTaskMessages: vi.fn(),
-}))
-
-// Mock the i18n module
-vi.mock("../../../i18n", () => ({
-	t: vi.fn((key: string) => key),
-	changeLanguage: vi.fn(),
-}))
-
-vi.mock("vscode", () => ({
-	window: {
-		showErrorMessage: vi.fn(),
-		showWarningMessage: vi.fn(),
-		showInformationMessage: vi.fn(),
-		createTextEditorDecorationType: vi.fn(() => ({
-			dispose: vi.fn(),
-		})),
-	},
-	workspace: {
-		workspaceFolders: undefined,
-		getConfiguration: vi.fn(() => ({
-			get: vi.fn(),
-			update: vi.fn(),
-		})),
-	},
-	ConfigurationTarget: {
-		Global: 1,
-		Workspace: 2,
-		WorkspaceFolder: 3,
-	},
-	Uri: {
-		parse: vi.fn((str) => ({ toString: () => str })),
-		file: vi.fn((path) => ({ fsPath: path })),
-	},
-	env: {
-		openExternal: vi.fn(),
-		clipboard: {
-			writeText: vi.fn(),
-		},
-	},
-	commands: {
-		executeCommand: vi.fn(),
-	},
-}))
-
-describe("webviewMessageHandler delete functionality", () => {
-	let provider: any
-	let getCurrentTaskMock: any
-
-	beforeEach(() => {
-		// Reset all mocks
-		vi.clearAllMocks()
-
-		// Create mock task
-		getCurrentTaskMock = {
-			clineMessages: [],
-			apiConversationHistory: [],
-			overwriteClineMessages: vi.fn(async () => {}),
-			overwriteApiConversationHistory: vi.fn(async () => {}),
-			taskId: "test-task-id",
-		}
-
-		// Create mock provider
-		provider = {
-			getCurrentTask: vi.fn(() => getCurrentTaskMock),
-			postMessageToWebview: vi.fn(),
-			contextProxy: {
-				getValue: vi.fn(),
-				setValue: vi.fn(async () => {}),
-				globalStorageUri: { fsPath: "/test/path" },
-			},
-			log: vi.fn(),
-			cwd: "/test/cwd",
-		}
-	})
-
-	describe("handleDeleteMessageConfirm", () => {
-		it("should handle deletion when apiConversationHistoryIndex is -1 (message not in API history)", async () => {
-			// Setup test data with a user message and assistant response
-			const userMessageTs = 1000
-			const assistantMessageTs = 1001
-
-			getCurrentTaskMock.clineMessages = [
-				{ ts: userMessageTs, say: "user", text: "Hello" },
-				{ ts: assistantMessageTs, say: "assistant", text: "Hi there" },
-			]
-
-			// API history has the assistant message but not the user message
-			// This simulates the case where the user message wasn't in API history
-			getCurrentTaskMock.apiConversationHistory = [
-				{ ts: assistantMessageTs, role: "assistant", content: { type: "text", text: "Hi there" } },
-				{
-					ts: 1002,
-					role: "assistant",
-					content: { type: "text", text: "attempt_completion" },
-					name: "attempt_completion",
-				},
-			]
-
-			// Call delete for the user message
-			await webviewMessageHandler(provider, {
-				type: "deleteMessageConfirm",
-				messageTs: userMessageTs,
-			})
-
-			// Verify that clineMessages was truncated at the correct index
-			expect(getCurrentTaskMock.overwriteClineMessages).toHaveBeenCalledWith([])
-
-			// When message is not found in API history (index is -1),
-			// API history should be truncated from the first API message at/after the deleted timestamp (fallback)
-			expect(getCurrentTaskMock.overwriteApiConversationHistory).toHaveBeenCalledWith([])
-		})
-
-		it("should handle deletion when exact apiConversationHistoryIndex is found", async () => {
-			// Setup test data where message exists in both arrays
-			const messageTs = 1000
-
-			getCurrentTaskMock.clineMessages = [
-				{ ts: 900, say: "user", text: "Previous message" },
-				{ ts: messageTs, say: "user", text: "Delete this" },
-				{ ts: 1100, say: "assistant", text: "Response" },
-			]
-
-			getCurrentTaskMock.apiConversationHistory = [
-				{ ts: 900, role: "user", content: { type: "text", text: "Previous message" } },
-				{ ts: messageTs, role: "user", content: { type: "text", text: "Delete this" } },
-				{ ts: 1100, role: "assistant", content: { type: "text", text: "Response" } },
-			]
-
-			// Call d
-…[truncated]
-# note: truncated to stay within per-file budget
-
-===== __tests__/webviewMessageHandler.edit.spec.ts =====
-import type { Mock } from "vitest"
-import { describe, it, expect, vi, beforeEach } from "vitest"
-
-// Mock dependencies first
-vi.mock("vscode", () => ({
-	window: {
-		showWarningMessage: vi.fn(),
-		showErrorMessage: vi.fn(),
-		createTextEditorDecorationType: vi.fn(() => ({
-			dispose: vi.fn(),
-		})),
-	},
-	workspace: {
-		workspaceFolders: [{ uri: { fsPath: "/mock/workspace" } }],
-		getConfiguration: vi.fn().mockReturnValue({
-			get: vi.fn(),
-			update: vi.fn(),
-		}),
-	},
-	Uri: {
-		file: vi.fn((path) => ({ fsPath: path })),
-	},
-	env: {
-		uriScheme: "vscode",
-	},
-}))
-
-vi.mock("../../task-persistence", () => ({
-	saveTaskMessages: vi.fn(),
-}))
-
-vi.mock("../../../api/providers/fetchers/modelCache", () => ({
-	getModels: vi.fn(),
-	flushModels: vi.fn(),
-}))
-
-vi.mock("../checkpointRestoreHandler", () => ({
-	handleCheckpointRestoreOperation: vi.fn(),
-}))
-
-// Import after mocks
-import { webviewMessageHandler } from "../webviewMessageHandler"
-import type { ClineProvider } from "../ClineProvider"
-import type { ClineMessage } from "@roo-code/types"
-import type { ApiMessage } from "../../task-persistence/apiMessages"
-
-describe("webviewMessageHandler - Edit Message with Timestamp Fallback", () => {
-	let mockClineProvider: ClineProvider
-	let mockCurrentTask: any
-
-	beforeEach(() => {
-		vi.clearAllMocks()
-
-		// Create a mock task with messages
-		mockCurrentTask = {
-			taskId: "test-task-id",
-			clineMessages: [] as ClineMessage[],
-			apiConversationHistory: [] as ApiMessage[],
-			overwriteClineMessages: vi.fn(),
-			overwriteApiConversationHistory: vi.fn(),
-			handleWebviewAskResponse: vi.fn(),
-		}
-
-		// Create mock provider
-		mockClineProvider = {
-			getCurrentTask: vi.fn().mockReturnValue(mockCurrentTask),
-			postMessageToWebview: vi.fn(),
-			contextProxy: {
-				getValue: vi.fn(),
-				setValue: vi.fn(),
-				globalStorageUri: { fsPath: "/mock/storage" },
-			},
-			log: vi.fn(),
-		} as unknown as ClineProvider
-	})
-
-	it("should not modify API history when apiConversationHistoryIndex is -1", async () => {
-		// Setup: User message followed by attempt_completion
-		const userMessageTs = 1000
-		const assistantMessageTs = 2000
-		const completionMessageTs = 3000
-
-		// UI messages (clineMessages)
-		mockCurrentTask.clineMessages = [
-			{
-				ts: userMessageTs,
-				type: "say",
-				say: "user_feedback",
-				text: "Hello",
-			} as ClineMessage,
-			{
-				ts: completionMessageTs,
-				type: "say",
-				say: "completion_result",
-				text: "Task Completed!",
-			} as ClineMessage,
-		]
-
-		// API conversation history - note the user message is missing (common scenario after condense)
-		mockCurrentTask.apiConversationHistory = [
-			{
-				ts: assistantMessageTs,
-				role: "assistant",
-				content: [
-					{
-						type: "text",
-						text: "I'll help you with that.",
-					},
-				],
-			},
-			{
-				ts: completionMessageTs,
-				role: "assistant",
-				content: [
-					{
-						type: "tool_use",
-						name: "attempt_completion",
-						id: "tool-1",
-						input: {
-							result: "Task Completed!",
-						},
-					},
-				],
-			},
-		] as ApiMessage[]
-
-		// Trigger edit confirmation
-		await webviewMessageHandler(mockClineProvider, {
-			type: "editMessageConfirm",
-			messageTs: userMessageTs,
-			text: "Hello World", // edited content
-			restoreCheckpoint: false,
-		})
-
-		// Verify that UI messages were truncated at the correct index
-		expect(mockCurrentTask.overwriteClineMessages).toHaveBeenCalledWith(
-			[], // All messages before index 0 (empty array)
-		)
-
-		// API history should be truncated from first message at/after edited timestamp (fallback)
-		expect(mockCurrentTask.overwriteApiConversationHistory).toHaveBeenCalledWith([])
-	})
-
-	it("should preserve messages before the edited message when message not in API history", async () => {
-		const earlierMessageTs = 500
-		const userMessageTs = 1000
-		const assistantMessageTs = 2000
-
-		// UI messages
-		mockCurrentTask.clineMessages = [
-			{
-				ts: earlierMessageTs,
-				type: "say",
-				say: "user_feedback",
-				text: "Earlier message",
-			}
-…[truncated]
-# note: truncated to stay within per-file budget
-
-===== __tests__/webviewMessageHandler.spec.ts =====
-// npx vitest core/webview/__tests__/webviewMessageHandler.spec.ts
-
-import type { Mock } from "vitest"
-
-// Mock dependencies - must come before imports
-vi.mock("../../../api/providers/fetchers/modelCache")
-
-import { webviewMessageHandler } from "../webviewMessageHandler"
-import type { ClineProvider } from "../ClineProvider"
-import { getModels } from "../../../api/providers/fetchers/modelCache"
-import type { ModelRecord } from "../../../shared/api"
-
-const mockGetModels = getModels as Mock<typeof getModels>
-
-// Mock ClineProvider
-const mockClineProvider = {
-	getState: vi.fn(),
-	postMessageToWebview: vi.fn(),
-	customModesManager: {
-		getCustomModes: vi.fn(),
-		deleteCustomMode: vi.fn(),
-	},
-	context: {
-		extensionPath: "/mock/extension/path",
-		globalStorageUri: { fsPath: "/mock/global/storage" },
-	},
-	contextProxy: {
-		context: {
-			extensionPath: "/mock/extension/path",
-			globalStorageUri: { fsPath: "/mock/global/storage" },
-		},
-		setValue: vi.fn(),
-		getValue: vi.fn(),
-	},
-	log: vi.fn(),
-	postStateToWebview: vi.fn(),
-	getCurrentTask: vi.fn(),
-	getTaskWithId: vi.fn(),
-	createTaskWithHistoryItem: vi.fn(),
-} as unknown as ClineProvider
-
-import { t } from "../../../i18n"
-
-vi.mock("vscode", () => ({
-	window: {
-		showInformationMessage: vi.fn(),
-		showErrorMessage: vi.fn(),
-		createTextEditorDecorationType: vi.fn(() => ({ dispose: vi.fn() })), // kilocode_change
-	},
-	workspace: {
-		workspaceFolders: [{ uri: { fsPath: "/mock/workspace" } }],
-	},
-}))
-
-vi.mock("../../../i18n", () => ({
-	t: vi.fn((key: string, args?: Record<string, any>) => {
-		// For the delete confirmation with rules, we need to return the interpolated string
-		if (key === "common:confirmation.delete_custom_mode_with_rules" && args) {
-			return `Are you sure you want to delete this ${args.scope} mode?\n\nThis will also delete the associated rules folder at:\n${args.rulesFolderPath}`
-		}
-		// Return the translated value for "Yes"
-		if (key === "common:answers.yes") {
-			return "Yes"
-		}
-		// Return the translated value for "Cancel"
-		if (key === "common:answers.cancel") {
-			return "Cancel"
-		}
-		return key
-	}),
-}))
-
-vi.mock("fs/promises", () => {
-	const mockRm = vi.fn().mockResolvedValue(undefined)
-	const mockMkdir = vi.fn().mockResolvedValue(undefined)
-
-	return {
-		default: {
-			rm: mockRm,
-			mkdir: mockMkdir,
-		},
-		rm: mockRm,
-		mkdir: mockMkdir,
-	}
-})
-
-import * as vscode from "vscode"
-import * as fs from "fs/promises"
-import * as os from "os"
-import * as path from "path"
-import * as fsUtils from "../../../utils/fs"
-import { getWorkspacePath } from "../../../utils/path"
-import { ensureSettingsDirectoryExists } from "../../../utils/globalContext"
-import type { ModeConfig } from "@roo-code/types"
-
-vi.mock("../../../utils/fs")
-vi.mock("../../../utils/path")
-vi.mock("../../../utils/globalContext")
-
-describe("webviewMessageHandler - requestLmStudioModels", () => {
-	beforeEach(() => {
-		vi.clearAllMocks()
-		mockClineProvider.getState = vi.fn().mockResolvedValue({
-			apiConfiguration: {
-				lmStudioModelId: "model-1",
-				lmStudioBaseUrl: "http://localhost:1234",
-			},
-		})
-	})
-
-	it("successfully fetches models from LMStudio", async () => {
-		const mockModels: ModelRecord = {
-			"model-1": {
-				maxTokens: 4096,
-				contextWindow: 8192,
-				supportsPromptCache: false,
-				description: "Test model 1",
-			},
-			"model-2": {
-				maxTokens: 8192,
-				contextWindow: 16384,
-				supportsPromptCache: false,
-				description: "Test model 2",
-			},
-		}
-
-		mockGetModels.mockResolvedValue(mockModels)
-
-		await webviewMessageHandler(mockClineProvider, {
-			type: "requestLmStudioModels",
-		})
-
-		expect(mockGetModels).toHaveBeenCalledWith({ provider: "lmstudio", baseUrl: "http://localhost:1234" })
-
-		expect(mockClineProvider.postMessageToWebview).toHaveBeenCalledWith({
-			type: "lmStudioModels",
-			lmStudioModels: mockModels,
-		})
-	})
-})
-
-describe("webviewMessageHandler - requestOllamaModels", () => {
-	beforeEach(() => {
-		vi.clearAllMocks()
-		mockClineProvider.getState = vi.fn().mock
-…[truncated]
-# note: truncated to stay within per-file budget
-
+				await handleSupervisorResult(message.payload, provider)
+			} catch (error) {

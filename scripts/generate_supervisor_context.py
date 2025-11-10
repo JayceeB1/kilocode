@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
-from typing import Iterable, List, Set
+from typing import Iterable, List, Sequence, Set, Tuple
 
 # Default extensions/sample directories capture the common text surfaces in the repo.
 DEFAULT_EXTENSIONS: Set[str] = {
@@ -158,6 +158,24 @@ def read_file(path: Path, encoding: str, max_chars: int) -> tuple[str, bool]:
     return text, truncated
 
 
+def _write_context(lines: List[str], output_path: Path, encoding: str) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_text = "\n".join(lines).rstrip() + "\n"
+    output_path.write_text(output_text, encoding=encoding)
+
+
+def _format_header(label: str, files_count: int | None, max_file_chars: int, max_total_chars: int) -> List[str]:
+    lines = [f"# Context digest for {label}"]
+    if files_count is not None:
+        lines.append(f"# Files considered: {files_count}")
+    if max_file_chars:
+        lines.append(f"# Max chars per file: {max_file_chars}")
+    if max_total_chars:
+        lines.append(f"# Max chars per digest: {max_total_chars}")
+    lines.append("")
+    return lines
+
+
 def build_context_for_directory(
     root: Path,
     output_path: Path,
@@ -173,15 +191,8 @@ def build_context_for_directory(
         raise FileNotFoundError(f"Directory not found: {root}")
 
     files = list(iter_files(root, excluded_dirs, allowed_exts, allow_hidden))
-    lines: List[str] = []
     label = display_name or str(root)
-    lines.append(f"# Context digest for {label}")
-    lines.append(f"# Files considered: {len(files)}")
-    if max_file_chars:
-        lines.append(f"# Max chars per file: {max_file_chars}")
-    if max_total_chars:
-        lines.append(f"# Max chars per digest: {max_total_chars}")
-    lines.append("")
+    lines: List[str] = _format_header(label, len(files), max_file_chars, max_total_chars)
 
     total_chars = sum(len(line) + 1 for line in lines)
 
@@ -199,9 +210,98 @@ def build_context_for_directory(
         lines.append(block)
         total_chars += len(block)
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_text = "\n".join(lines).rstrip() + "\n"
-    output_path.write_text(output_text, encoding="utf-8")
+    _write_context(lines, output_path, encoding)
+
+
+def _normalize_files(files: Sequence[Path]) -> List[Path]:
+    normalized_files: List[Path] = []
+    cwd = Path.cwd()
+    for candidate in files:
+        absolute = candidate if candidate.is_absolute() else (cwd / candidate).resolve()
+        if not absolute.exists():
+            print(f"[context] Skipping missing file: {candidate}")
+            continue
+        normalized_files.append(absolute)
+    return normalized_files
+
+
+def _prepare_file_blocks(
+    files: Sequence[Path],
+    max_file_chars: int,
+    encoding: str,
+    relative_to: Path | None,
+) -> List[Tuple[str, str]]:
+    normalized_files = _normalize_files(files)
+    blocks: List[Tuple[str, str]] = []
+
+    for file_path in normalized_files:
+        rel_path = file_path
+        if relative_to:
+            try:
+                rel_path = file_path.relative_to(relative_to)
+            except ValueError:
+                rel_path = file_path
+
+        body, truncated = read_file(file_path, encoding, max_file_chars)
+        if truncated:
+            body = f"{body}\n\n# note: truncated to stay within per-file budget"
+
+        blocks.append((str(rel_path), body))
+
+    return blocks
+
+
+def build_context_from_files(
+    files: Sequence[Path],
+    output_path: Path,
+    max_file_chars: int,
+    max_total_chars: int,
+    encoding: str,
+    relative_to: Path | None = None,
+    display_name: str | None = None,
+) -> None:
+    blocks = _prepare_file_blocks(files, max_file_chars, encoding, relative_to)
+    label = display_name or "selected files"
+    build_context_from_text_blocks(
+        blocks=blocks,
+        output_path=output_path,
+        max_total_chars=max_total_chars,
+        encoding=encoding,
+        display_name=label,
+        max_file_chars=max_file_chars,
+    )
+
+
+def collect_file_blocks(
+    files: Sequence[Path],
+    max_file_chars: int,
+    encoding: str,
+    relative_to: Path | None = None,
+) -> List[Tuple[str, str]]:
+    """Expose file block collection for custom aggregations."""
+    return _prepare_file_blocks(files, max_file_chars, encoding, relative_to)
+
+
+def build_context_from_text_blocks(
+    blocks: Sequence[Tuple[str, str]],
+    output_path: Path,
+    max_total_chars: int,
+    encoding: str,
+    display_name: str,
+    max_file_chars: int = 0,
+) -> None:
+    lines: List[str] = _format_header(display_name, len(blocks), max_file_chars, max_total_chars)
+    total_chars = sum(len(line) + 1 for line in lines)
+
+    for label, body in blocks:
+        block = f"===== {label} =====\n{body.rstrip()}\n\n"
+        if max_total_chars and total_chars + len(block) > max_total_chars:
+            lines.append("# --- reached max_total_chars budget; stopping early ---")
+            break
+        lines.append(block)
+        total_chars += len(block)
+
+    _write_context(lines, output_path, encoding)
 
 
 def main() -> None:

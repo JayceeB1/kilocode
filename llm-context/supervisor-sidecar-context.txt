@@ -1,4 +1,9 @@
-# Context digest for packages/supervisor-sidecar# Files considered: 10# Max chars per file: 4000# Max chars per digest: 160000===== eslint.config.js =====
+# Context digest for packages/supervisor-sidecar
+# Files considered: 10
+# Max chars per file: 4000
+# Max chars per digest: 160000
+
+===== eslint.config.js =====
 import { config } from "@roo-code/config-eslint/base"
 
 export default [
@@ -15,6 +20,7 @@ export default [
 		ignores: ["build/**", "out/**", "coverage/**", "**/*.js", "!**/*.cjs"],
 	},
 ]
+
 
 ===== package.json =====
 {
@@ -74,7 +80,7 @@ export default [
 				},
 				"kilo-code.supervisor.serviceUrl": {
 					"type": "string",
-					"default": "http://127.0.0.1:43110",
+					"default": "http://127.0.0.1:9611",
 					"description": "URL of the KiloCode Supervisor service"
 				},
 				"kilo-code.supervisor.autoAnalyze": {
@@ -97,6 +103,7 @@ export default [
 	}
 }
 
+
 ===== tsconfig.json =====
 {
 	"extends": "../../tsconfig.base.json",
@@ -110,6 +117,7 @@ export default [
 	"exclude": ["node_modules", "dist", "**/*.test.ts", "**/*.spec.ts"]
 }
 
+
 ===== tsup.config.ts =====
 import { defineConfig } from "tsup"
 
@@ -120,6 +128,7 @@ export default defineConfig({
 	clean: true,
 	sourcemap: true,
 })
+
 
 ===== vitest.config.ts =====
 import { defineConfig } from "vitest/config"
@@ -132,6 +141,7 @@ export default defineConfig({
 		exclude: ["node_modules", "dist"],
 	},
 })
+
 
 ===== src/index.ts =====
 import * as vscode from "vscode"
@@ -152,8 +162,8 @@ export function activate(context: vscode.ExtensionContext) {
 
 	// Initialize services
 	supervisorService = new SupervisorService()
-	terminalCapture = new TerminalCapture(supervisorService, outputChannel)
 	problemMatcher = new ProblemMatcher(outputChannel)
+	terminalCapture = new TerminalCapture(supervisorService, outputChannel, problemMatcher)
 
 	// Register commands
 	const toggleCaptureCommand = vscode.commands.registerCommand("kilo-code.supervisor.toggleCapture", () =>
@@ -237,6 +247,7 @@ export function deactivate() {
 	outputChannel.appendLine("KiloCode Supervisor Sidecar deactivated")
 	outputChannel.dispose()
 }
+
 
 ===== src/problemMatcher.ts =====
 import * as vscode from "vscode"
@@ -379,6 +390,7 @@ export class ProblemMatcher implements vscode.Disposable {
 …[truncated]
 # note: truncated to stay within per-file budget
 
+
 ===== src/supervisorService.test.ts =====
 import { describe, test, expect, beforeEach, vi } from "vitest"
 import { SupervisorService } from "./supervisorService.js"
@@ -389,7 +401,7 @@ vi.mock("vscode", () => ({
 	workspace: {
 		getConfiguration: vi.fn(() => ({
 			get: vi.fn((key: string, defaultValue: unknown) => {
-				if (key === "serviceUrl") return "http://localhost:43110"
+				if (key === "serviceUrl") return "http://localhost:9611"
 				return defaultValue
 			}),
 		})),
@@ -428,7 +440,7 @@ describe("SupervisorService", () => {
 	})
 
 	test("should initialize with correct service URL", () => {
-		expect(service["serviceUrl"]).toBe("http://localhost:43110")
+		expect(service["serviceUrl"]).toBe("http://localhost:9611")
 	})
 
 	test("should test connection successfully", async () => {
@@ -446,7 +458,7 @@ describe("SupervisorService", () => {
 						provider: "ollama",
 						model: "llama3.1:8b-instruct-q4",
 						bind: "127.0.0.1",
-						port: 43110,
+						port: 9611,
 					},
 				},
 			}),
@@ -493,6 +505,7 @@ describe("SupervisorService", () => {
 		expect(result.message).toContain("Failed to get service info")
 	})
 })
+
 
 ===== src/supervisorService.ts =====
 import axios, { AxiosInstance, AxiosResponse } from "axios"
@@ -559,7 +572,7 @@ export class SupervisorService {
 
 	private loadServiceUrl(): string {
 		const config = vscode.workspace.getConfiguration("kilo-code.supervisor")
-		return config.get<string>("serviceUrl", "http://127.0.0.1:43110")
+		return config.get<string>("serviceUrl", "http://127.0.0.1:9611")
 	}
 
 	private setupConfigWatcher(): void {
@@ -647,9 +660,11 @@ export class SupervisorService {
 	}
 }
 
+
 ===== src/terminal.ts =====
 import * as vscode from "vscode"
 import { SupervisorService } from "./supervisorService.js"
+import { ProblemMatcher } from "./problemMatcher.js"
 
 export interface TerminalCaptureConfig {
 	enabled: boolean
@@ -666,6 +681,7 @@ export class TerminalCapture implements vscode.Disposable {
 	constructor(
 		private supervisorService: SupervisorService,
 		private outputChannel: vscode.OutputChannel,
+		private problemMatcher?: ProblemMatcher,
 	) {
 		this.config = this.loadConfig()
 		this.setupEventListeners()
@@ -722,55 +738,44 @@ export class TerminalCapture implements vscode.Disposable {
 		const terminalName = terminal.name
 		this.terminalData.set(terminalName, [])
 
+		// Log experimental strategy
+		this.outputChannel.appendLine("Using experimental terminal capture strategy")
+
 		// Listen for terminal data
 		// Note: onDidWriteData is not available in current VS Code API
 		// This will need to be implemented differently when the API is available
 		// const dataDisposable = terminal.onDidWriteData((data) => {
 		//   this.captureTerminalData(terminalName, data);
 		// });
+		
+		// Implement capture with onDidWriteTerminalData if strategy is "insiders"
 		const dataDisposable = new vscode.Disposable(() => {})
-
-		const closeDisposable = vscode.window.onDidCloseTerminal((closedTerminal) => {
-			if (closedTerminal.name === terminalName) {
-				this.terminalData.delete(terminalName)
-				dataDisposable.dispose()
-			}
-		})
-
-		this.disposables.push(dataDisposable, closeDisposable)
-	}
-
-	private captureTerminalData(terminalName: string, data: string): void {
-		if (!this.isCapturing) {
-			return
-		}
-
-		const terminalOutput = this.terminalData.get(terminalName) || []
-		terminalOutput.push(data)
-		this.terminalData.set(terminalName, terminalOutput)
-	}
-
-	private async handleTerminalExecution(event: { execution: { commandLine: { value: string } } }): Promise<void> {
-		if (!this.config.enabled || !this.config.autoAnalyze) {
-			return
-		}
-
-		const command = event.execution.commandLine.value
-		const shouldCapture = this.config.captureCommands.some((captureCommand) => command.includes(captureCommand))
-
-		if (shouldCapture) {
-			this.outputChannel.appendLine(`Capturing terminal execution: ${command}`)
-			this.isCapturing = true
-
-			// Wait for command to complete, then analyze output
-			// Note: This API is not available yet, will need to be implemented differently
-			// event.execution.read().then(async (result) => {
-			//   if (result.exitCode !== 0) {
-			//     await this.analyzeTerminalOutput(command, result.exitCode);
-			//   }
-			//   this.isCapturing = false;
+		if (process.env.VSCODE_INSIDERS === "1") {
+			// Use insiders API if available
+			// Note: This is a placeholder for when the API becomes available
+			// const actualDataDisposable = terminal.onDidWriteTerminalData((data) => {
+			//   this.captureTerminalData(terminalName, data);
 			// });
-	
+			this.outputChannel.appendLine("Insiders API detected, but onDidWriteTerminalData not yet available")
+		}
+
+		// Add handler for onDidEndTaskProcess to send diagnostic on command failure
+		const taskEndDisposable = vscode.tasks.onDidEndTaskProcess((e) => {
+			if (e.exitCode !== undefined && e.exitCode !== 0 && this.problemMatcher) {
+				// Send a "command_failed" diagnostic to the ProblemMatcher
+				const issue = {
+					type: "command_failed",
+					severity: "error" as const,
+					message: `Command failed with exit code ${e.exitCode}`,
+					suggestion: "Check the terminal output for more details"
+				}
+				
+				// Create a minimal analysis result to pass to problemMatcher
+				const analysisResult = {
+					analysis: {
+						issues: [issue],
+						suggestions: []
+					},
+					metadata
 …[truncated]
 # note: truncated to stay within per-file budget
-

@@ -1,4 +1,9 @@
-# Context digest for packages/supervisor-service# Files considered: 34# Max chars per file: 4000# Max chars per digest: 160000===== eslint.config.js =====
+# Context digest for packages/supervisor-service
+# Files considered: 34
+# Max chars per file: 4000
+# Max chars per digest: 160000
+
+===== eslint.config.js =====
 import { config } from "@roo-code/config-eslint/base"
 
 export default [
@@ -23,6 +28,7 @@ export default [
 		ignores: ["build/**", "out/**", "coverage/**", "**/*.js", "!**/*.cjs"],
 	},
 ]
+
 
 ===== package.json =====
 {
@@ -62,6 +68,7 @@ export default [
 	}
 }
 
+
 ===== tsconfig.build.json =====
 {
 	"extends": "./tsconfig.json",
@@ -75,6 +82,7 @@ export default [
 	},
 	"exclude": ["**/*.test.ts", "**/*.spec.ts"]
 }
+
 
 ===== tsconfig.json =====
 {
@@ -90,6 +98,7 @@ export default [
 	"exclude": ["node_modules", "dist", "**/*.test.ts", "**/*.spec.ts"]
 }
 
+
 ===== tsup.config.ts =====
 import { defineConfig } from "tsup"
 
@@ -100,6 +109,7 @@ export default defineConfig({
 	clean: true,
 	sourcemap: true,
 })
+
 
 ===== vitest.config.ts =====
 import { defineConfig } from "vitest/config"
@@ -112,6 +122,7 @@ export default defineConfig({
 		exclude: ["node_modules", "dist"],
 	},
 })
+
 
 ===== src/analyze.test.ts =====
 import { describe, test, expect, beforeEach, vi } from "vitest"
@@ -274,6 +285,7 @@ describe("healthCheck", () => {
 …[truncated]
 # note: truncated to stay within per-file budget
 
+
 ===== src/analyze.ts =====
 import { Request, Response } from "express"
 import { getConfig } from "./config.js"
@@ -373,6 +385,7 @@ export async function healthCheck(req: Request, res: Response): Promise<void> {
 		})
 	}
 }
+
 
 ===== src/config.test.ts =====
 import { describe, test, expect, beforeEach, afterEach } from "vitest"
@@ -479,6 +492,7 @@ describe("Config", () => {
 	})
 })
 
+
 ===== src/config.ts =====
 import { z } from "zod"
 import { readFileSync } from "fs"
@@ -536,6 +550,7 @@ export function getConfig(): SupervisorConfig {
 export function resetConfig(): void {
 	config = null
 }
+
 
 ===== src/index.ts =====
 import express from "express"
@@ -646,6 +661,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 }
 
 export { startServer }
+
 
 ===== src/patcher.test.ts =====
 /**
@@ -800,6 +816,7 @@ describe("Smart Patcher System", () => {
 …[truncated]
 # note: truncated to stay within per-file budget
 
+
 ===== src/cli/README.md =====
 # Smart Patcher CLI
 
@@ -911,6 +928,7 @@ echo '{"id":"test","ops":[{"id":"op1","strategy":"strict","filePath":"test.txt",
 ```bash
 echo '{"id":"test","ops":[...]}' | patch --envelope my-envelope.json
 ```
+
 
 ===== src/cli/patch.ts =====
 #!/usr/bin/env node
@@ -1084,6 +1102,7 @@ Examples:
 …[truncated]
 # note: truncated to stay within per-file budget
 
+
 ===== src/cli/__tests__/patch.test.ts =====
 /**
  * Tests for the CLI patch interface
@@ -1222,6 +1241,7 @@ describe("CLI Patch Interface", () => {
 …[truncated]
 # note: truncated to stay within per-file budget
 
+
 ===== src/contracts/error-report.ts =====
 /**
  * Error reporting and classification for the Smart Patcher
@@ -1355,6 +1375,7 @@ export interface ErrorContext {
 	remainingTimeMs: number
 }
 
+
 ===== src/contracts/remediation-plan.ts =====
 /**
  * Remediation plan definitions for the Smart Patcher
@@ -1470,6 +1491,7 @@ export interface RemediationOptions {
 	excludePatterns?: string[]
 }
 
+
 ===== src/contracts/task-envelope.ts =====
 /**
  * Task envelope and scope definitions for the Smart Patcher
@@ -1569,6 +1591,7 @@ export interface TaskResult {
 	completedAt?: Date
 }
 
+
 ===== src/llm/index.ts =====
 /**
  * LLM facade module for code analysis
@@ -1616,6 +1639,7 @@ export async function analyzeWithLLM(
 			throw new Error(`Unsupported LLM provider: ${config.provider}`)
 	}
 }
+
 ===== src/llm/ollamaClient.ts =====
 import { getConfig } from "../config.js"
 import type { AnalyzeResponse } from "../analyze.js"
@@ -1779,6 +1803,7 @@ function validateAnalysis(analysis: any): LlmAnalysis {
 …[truncated]
 # note: truncated to stay within per-file budget
 
+
 ===== src/patch/SmartPatcher.ts =====
 /**
  * SmartPatcher engine with STRICT→FUZZY→AST strategy
@@ -1909,6 +1934,7 @@ export class SmartPatcher {
 		const { allowPa
 …[truncated]
 # note: truncated to stay within per-file budget
+
 
 ===== src/patch/anchors.ts =====
 /**
@@ -2046,6 +2072,7 @@ export function ensureImport(content: string, named: string, from: string): stri
 …[truncated]
 # note: truncated to stay within per-file budget
 
+
 ===== src/patch/ast.ts =====
 /**
  * AST manipulation functionality for Smart Patcher
@@ -2170,6 +2197,7 @@ export function insertUseEffectStub(content: string, effectCode: string): string
 	return content + `\n\nuseEffect
 …[truncated]
 # note: truncated to stay within per-file budget
+
 
 ===== src/patch/classifier.ts =====
 /**
@@ -2316,6 +2344,7 @@ export function classifyToolMessage(msg: string): ErrorClassification {
 	return
 …[truncated]
 # note: truncated to stay within per-file budget
+
 
 ===== src/patch/envelope.ts =====
 /**
@@ -2467,6 +2496,7 @@ export function applySecurityConstraints(
 …[truncated]
 # note: truncated to stay within per-file budget
 
+
 ===== src/patch/registry.ts =====
 /**
  * Registry management for observations and suggestions
@@ -2614,6 +2644,7 @@ export function mergeObservation(registry: Registry, observation: RegistryObserv
 			obs.file === observ
 …[truncated]
 # note: truncated to stay within per-file budget
+
 
 ===== src/patch/types.ts =====
 /**
@@ -2786,6 +2817,7 @@ export interface PatchPlanResult {
 	}
 }
 
+
 ===== src/patch/validators.ts =====
 /**
  * Validation utilities for patch plans and task envelopes
@@ -2921,6 +2953,7 @@ export function validateTaskEnvelope(envelope: TaskEnvelope): ValidationResult {
 …[truncated]
 # note: truncated to stay within per-file budget
 
+
 ===== src/patch/__tests__/anchors.test.ts =====
 import { describe, test, expect } from "vitest"
 import {
@@ -3048,6 +3081,7 @@ describe("Anchor-based fuzzy matching", () => {
 			expect(result).toBe("function test() // New comment { return 4
 …[truncated]
 # note: truncated to stay within per-file budget
+
 
 ===== src/patch/__tests__/ast.test.ts =====
 /**
@@ -3203,6 +3237,7 @@ const App = ()
 …[truncated]
 # note: truncated to stay within per-file budget
 
+
 ===== src/patch/__tests__/classifier.test.ts =====
 /**
  * Tests for the error classification system
@@ -3289,6 +3324,7 @@ describe("classifyToolMessage", () => {
 		expect(
 …[truncated]
 # note: truncated to stay within per-file budget
+
 
 ===== src/patch/__tests__/registry.test.ts =====
 /**
@@ -3439,6 +3475,7 @@ describe("Registry Management", () => {
 				class
 …[truncated]
 # note: truncated to stay within per-file budget
+
 
 ===== src/patch/__tests__/validators.test.ts =====
 /**
@@ -3610,6 +3647,7 @@ describe("validateOperation", () => {
 …[truncated]
 # note: truncated to stay within per-file budget
 
+
 ===== src/routes/patch.ts =====
 /**
  * Patch route for the supervisor service
@@ -3763,4 +3801,3 @@ export function validatePatchPlan(plan: PatchPlan): boolean {
 		if (!op.type || !["search_replace"
 …[truncated]
 # note: truncated to stay within per-file budget
-

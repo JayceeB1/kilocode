@@ -1,162 +1,9 @@
-# Context digest for webview-ui/src/state# Files considered: 4# Max chars per file: 4000# Max chars per digest: 160000===== patcherSlice.ts =====
-import React, { createContext, useContext, useEffect, useState } from "react"
+# Context digest for Supervisor UI state
+# Files considered: 4
+# Max chars per file: 4000
+# Max chars per digest: 160000
 
-/**
- * Patcher event classification types
- */
-export type PatcherClassification = "applied" | "anchor_mismatch" | "lint_error" | "type_error" | "noop" | "unknown"
-
-/**
- * Interface for a patcher event
- */
-export interface PatcherEvent {
-	/** ID of the message that triggered the patcher event */
-	messageId: string
-	/** Classification of the patcher result */
-	classification: PatcherClassification
-	/** Optional file path where the patcher was applied */
-	file?: string
-	/** Optional error description if the patcher failed */
-	error?: string
-	/** Optional suggested plan for remediation */
-	suggestedPlan?: any
-	/** Timestamp when the event was received */
-	ts: number
-}
-
-/**
- * Interface for the patcher events state
- */
-export interface PatcherState {
-	/** Map of patcher events indexed by messageId */
-	events: Record<string, PatcherEvent>
-}
-
-/**
- * Context type for the patcher chat provider
- */
-type PatcherContextType = {
-	/** Current patcher state */
-	state: PatcherState
-	/** Function to add or update a patcher event */
-	addOrUpdateEvent: (event: PatcherEvent) => void
-	/** Function to clear all patcher events */
-	clearEvents: () => void
-	/** Function to get a specific patcher event by messageId */
-	getEvent: (messageId: string) => PatcherEvent | undefined
-}
-
-/**
- * Default context value
- */
-const PatcherContext = createContext<PatcherContextType>({
-	state: { events: {} },
-	addOrUpdateEvent: () => {},
-	clearEvents: () => {},
-	getEvent: () => undefined,
-})
-
-/**
- * Provider component for patcher event state management
- *
- * This component listens for "supervisor:patcherEvent" messages from the window
- * and maintains an in-memory map of events by messageId.
- *
- * @param children - React children components
- *
- * @example
- * ```tsx
- * <PatcherChatProvider>
- *   <App />
- * </PatcherChatProvider>
- * ```
- */
-export const PatcherChatProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-	const [state, setState] = useState<PatcherState>({ events: {} })
-
-	/**
-	 * Add or update a patcher event in the state
-	 *
-	 * @param event - The patcher event to add or update
-	 */
-	const addOrUpdateEvent = (event: PatcherEvent) => {
-		setState((prevState) => ({
-			events: {
-				...prevState.events,
-				[event.messageId]: event,
-			},
-		}))
-	}
-
-	/**
-	 * Clear all patcher events from the state
-	 */
-	const clearEvents = () => {
-		setState({ events: {} })
-	}
-
-	/**
-	 * Get a specific patcher event by messageId
-	 *
-	 * @param messageId - The message ID to look up
-	 * @returns The patcher event if found, undefined otherwise
-	 */
-	const getEvent = (messageId: string): PatcherEvent | undefined => {
-		return state.events[messageId]
-	}
-
-	/**
-	 * Effect to listen for supervisor:patcherEvent messages
-	 */
-	useEffect(() => {
-		const handleMessage = (event: MessageEvent) => {
-			const message = event.data
-
-			// Check if this is a supervisor:patcherEvent message
-			if (message?.type === "supervisor:patcherEvent") {
-				try {
-					// Validate required fields
-					if (!message.messageId || !message.classification) {
-						throw new Error("Missing required fields: messageId and classification")
-					}
-
-					const patcherEvent: PatcherEvent = {
-						messageId: message.messageId,
-						classification: message.classification,
-						file: message.file,
-						error: message.error,
-						suggestedPlan: message.suggestedPlan,
-						ts: Date.now(),
-					}
-
-					addOrUpdateEvent(patcherEvent)
-				} catch (error) {
-					console.error("Failed to process supervisor:patcherEvent message:", error)
-				}
-			}
-		}
-
-		// Add event listener for window messages
-		window.addEventListener("message", handleMessage)
-
-		// Clean up event listener on unmount
-		return () => {
-			window.removeEventListener("message", handleMessage)
-		}
-	}, [])
-
-	const contextValue: PatcherContextType = {
-		state,
-		addOrUpdateEvent,
-		clearEvents,
-		getEvent,
-	}
-
-	return React.createElement(PatcherContext.Provider, { va
-…[truncated]
-# note: truncated to stay within per-file budget
-
-===== supervisorSlice.ts =====
+===== webview-ui/src/state/supervisorSlice.ts =====
 import React, { createContext, useContext, useEffect, useState } from "react"
 import { invoke } from "../utils/vscode"
 
@@ -213,159 +60,8 @@ export const SupervisorProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
 export const useSupervisor = () => useContext(SupervisorCtx)
 
-===== __tests__/patcherSlice.spec.tsx =====
-import React from "react"
-import { render, act, fireEvent } from "@testing-library/react"
-import { describe, it, expect, beforeEach, vi } from "vitest"
-import {
-	PatcherChatProvider,
-	usePatcherChat,
-	createPatcherEvent,
-	isSuccessfulEvent,
-	isErrorEvent,
-	type PatcherEvent,
-	type PatcherClassification,
-} from "../patcherSlice"
 
-// Mock console.error to avoid test output noise
-vi.mock("../../../utils/vscode", () => ({
-	vscode: {
-		postMessage: vi.fn(),
-	},
-}))
-
-describe("patcherSlice", () => {
-	let TestComponent: React.FC<{ onStateUpdate?: (state: any) => void }>
-
-	beforeEach(() => {
-		// Reset all mocks before each test
-		vi.clearAllMocks()
-
-		// Create a test component that uses the hook
-		TestComponent = ({ onStateUpdate }) => {
-			// eslint-disable-next-line @typescript-eslint/no-unused-vars
-			const { state, addOrUpdateEvent, clearEvents, getEvent } = usePatcherChat()
-
-			// Call the callback with the current state for testing
-			React.useEffect(() => {
-				onStateUpdate?.(state)
-			}, [state, onStateUpdate])
-
-			return <div data-testid="test-component">Test Component</div>
-		}
-	})
-
-	describe("PatcherChatProvider", () => {
-		it("should provide initial state with empty events map", () => {
-			let capturedState: any
-
-			render(
-				<PatcherChatProvider>
-					<TestComponent
-						onStateUpdate={(state) => {
-							capturedState = state
-						}}
-					/>
-				</PatcherChatProvider>,
-			)
-
-			expect(capturedState).toEqual({ events: {} })
-		})
-
-		it("should handle supervisor:patcherEvent messages", () => {
-			let capturedState: any
-
-			render(
-				<PatcherChatProvider>
-					<TestComponent
-						onStateUpdate={(state) => {
-							capturedState = state
-						}}
-					/>
-				</PatcherChatProvider>,
-			)
-
-			// Simulate a supervisor:patcherEvent message
-			const patcherMessage = {
-				type: "supervisor:patcherEvent",
-				messageId: "test-message-123",
-				classification: "applied" as PatcherClassification,
-				file: "/path/to/test.ts",
-				error: undefined,
-				suggestedPlan: undefined,
-			}
-
-			act(() => {
-				fireEvent(window, new MessageEvent("message", { data: patcherMessage }))
-			})
-
-			expect(capturedState.events["test-message-123"]).toBeDefined()
-			expect(capturedState.events["test-message-123"].messageId).toBe("test-message-123")
-			expect(capturedState.events["test-message-123"].classification).toBe("applied")
-			expect(capturedState.events["test-message-123"].file).toBe("/path/to/test.ts")
-			expect(capturedState.events["test-message-123"].ts).toBeTypeOf("number")
-		})
-
-		it("should handle supervisor:patcherEvent messages with error", () => {
-			let capturedState: any
-
-			render(
-				<PatcherChatProvider>
-					<TestComponent
-						onStateUpdate={(state) => {
-							capturedState = state
-						}}
-					/>
-				</PatcherChatProvider>,
-			)
-
-			// Simulate a supervisor:patcherEvent message with error
-			const patcherMessage = {
-				type: "supervisor:patcherEvent",
-				messageId: "test-message-456",
-				classification: "anchor_mismatch" as PatcherClassification,
-				file: "/path/to/test.ts",
-				error: "Anchor mismatch error",
-				suggestedPlan: { action: "retry" },
-			}
-
-			act(() => {
-				fireEvent(window, new MessageEvent("message", { data: patcherMessage }))
-			})
-
-			expect(capturedState.events["test-message-456"]).toBeDefined()
-			expect(capturedState.events["test-message-456"].error).toBe("Anchor mismatch error")
-			expect(capturedState.events["test-message-456"].suggestedPlan).toEqual({ action: "retry" })
-		})
-
-		it("should ignore non-supervisor:patcherEvent messages", () => {
-			let capturedState: any
-
-			render(
-				<PatcherChatProvider>
-					<TestComponent
-						onStateUpdate={(state) => {
-							capturedState = state
-						}}
-					/>
-				</PatcherChatProvider>,
-			)
-
-			// Simulate a different message type
-			const otherMessage = {
-				type: "other:message",
-				data: "should be ignored",
-			}
-
-			act(() => {
-				fireEvent(window, new MessageEvent("message", { data: otherMessage }))
-			})
-
-			// State should remain 
-…[truncated]
-# note: truncated to stay within per-file budget
-
-===== __tests__/supervisorSlice.spec.tsx =====
+===== webview-ui/src/state/__tests__/supervisorSlice.spec.tsx =====
 import React from "react"
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
@@ -533,5 +229,319 @@ describe("supervisorSlice", () => {
 			key: "k",
 			ct
 …[truncated]
+
 # note: truncated to stay within per-file budget
 
+
+===== webview-ui/src/state/patcherSlice.ts =====
+import React, { createContext, useContext, useEffect, useState } from "react"
+
+/**
+ * Patcher event classification types
+ */
+export type PatcherClassification = "applied" | "anchor_mismatch" | "lint_error" | "type_error" | "noop" | "unknown"
+
+/**
+ * Interface for a patcher event
+ */
+export interface PatcherEvent {
+	/** ID of the message that triggered the patcher event */
+	messageId: string
+	/** Classification of the patcher result */
+	classification: PatcherClassification
+	/** Optional file path where the patcher was applied */
+	file?: string
+	/** Optional error description if the patcher failed */
+	error?: string
+	/** Optional suggested plan for remediation */
+	suggestedPlan?: any
+	/** Timestamp when the event was received */
+	ts: number
+}
+
+/**
+ * Interface for the patcher events state
+ */
+export interface PatcherState {
+	/** Map of patcher events indexed by messageId */
+	events: Record<string, PatcherEvent>
+}
+
+/**
+ * Context type for the patcher chat provider
+ */
+type PatcherContextType = {
+	/** Current patcher state */
+	state: PatcherState
+	/** Function to add or update a patcher event */
+	addOrUpdateEvent: (event: PatcherEvent) => void
+	/** Function to clear all patcher events */
+	clearEvents: () => void
+	/** Function to get a specific patcher event by messageId */
+	getEvent: (messageId: string) => PatcherEvent | undefined
+}
+
+/**
+ * Default context value
+ */
+const PatcherContext = createContext<PatcherContextType>({
+	state: { events: {} },
+	addOrUpdateEvent: () => {},
+	clearEvents: () => {},
+	getEvent: () => undefined,
+})
+
+/**
+ * Provider component for patcher event state management
+ *
+ * This component listens for "supervisor:patcherEvent" messages from the window
+ * and maintains an in-memory map of events by messageId.
+ *
+ * @param children - React children components
+ *
+ * @example
+ * ```tsx
+ * <PatcherChatProvider>
+ *   <App />
+ * </PatcherChatProvider>
+ * ```
+ */
+export const PatcherChatProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+	const [state, setState] = useState<PatcherState>({ events: {} })
+
+	/**
+	 * Add or update a patcher event in the state
+	 *
+	 * @param event - The patcher event to add or update
+	 */
+	const addOrUpdateEvent = (event: PatcherEvent) => {
+		setState((prevState) => ({
+			events: {
+				...prevState.events,
+				[event.messageId]: event,
+			},
+		}))
+	}
+
+	/**
+	 * Clear all patcher events from the state
+	 */
+	const clearEvents = () => {
+		setState({ events: {} })
+	}
+
+	/**
+	 * Get a specific patcher event by messageId
+	 *
+	 * @param messageId - The message ID to look up
+	 * @returns The patcher event if found, undefined otherwise
+	 */
+	const getEvent = (messageId: string): PatcherEvent | undefined => {
+		return state.events[messageId]
+	}
+
+	/**
+	 * Effect to listen for supervisor:patcherEvent messages
+	 */
+	useEffect(() => {
+		const handleMessage = (event: MessageEvent) => {
+			const message = event.data
+
+			// Check if this is a supervisor:patcherEvent message
+			if (message?.type === "supervisor:patcherEvent") {
+				try {
+					// Validate required fields
+					if (!message.messageId || !message.classification) {
+						throw new Error("Missing required fields: messageId and classification")
+					}
+
+					const patcherEvent: PatcherEvent = {
+						messageId: message.messageId,
+						classification: message.classification,
+						file: message.file,
+						error: message.error,
+						suggestedPlan: message.suggestedPlan,
+						ts: Date.now(),
+					}
+
+					addOrUpdateEvent(patcherEvent)
+				} catch (error) {
+					console.error("Failed to process supervisor:patcherEvent message:", error)
+				}
+			}
+		}
+
+		// Add event listener for window messages
+		window.addEventListener("message", handleMessage)
+
+		// Clean up event listener on unmount
+		return () => {
+			window.removeEventListener("message", handleMessage)
+		}
+	}, [])
+
+	const contextValue: PatcherContextType = {
+		state,
+		addOrUpdateEvent,
+		clearEvents,
+		getEvent,
+	}
+
+	return React.createElement(PatcherContext.Provider, { va
+…[truncated]
+
+# note: truncated to stay within per-file budget
+
+
+===== webview-ui/src/state/__tests__/patcherSlice.spec.tsx =====
+import React from "react"
+import { render, act, fireEvent } from "@testing-library/react"
+import { describe, it, expect, beforeEach, vi } from "vitest"
+import {
+	PatcherChatProvider,
+	usePatcherChat,
+	createPatcherEvent,
+	isSuccessfulEvent,
+	isErrorEvent,
+	type PatcherEvent,
+	type PatcherClassification,
+} from "../patcherSlice"
+
+// Mock console.error to avoid test output noise
+vi.mock("../../../utils/vscode", () => ({
+	vscode: {
+		postMessage: vi.fn(),
+	},
+}))
+
+describe("patcherSlice", () => {
+	let TestComponent: React.FC<{ onStateUpdate?: (state: any) => void }>
+
+	beforeEach(() => {
+		// Reset all mocks before each test
+		vi.clearAllMocks()
+
+		// Create a test component that uses the hook
+		TestComponent = ({ onStateUpdate }) => {
+			// eslint-disable-next-line @typescript-eslint/no-unused-vars
+			const { state, addOrUpdateEvent, clearEvents, getEvent } = usePatcherChat()
+
+			// Call the callback with the current state for testing
+			React.useEffect(() => {
+				onStateUpdate?.(state)
+			}, [state, onStateUpdate])
+
+			return <div data-testid="test-component">Test Component</div>
+		}
+	})
+
+	describe("PatcherChatProvider", () => {
+		it("should provide initial state with empty events map", () => {
+			let capturedState: any
+
+			render(
+				<PatcherChatProvider>
+					<TestComponent
+						onStateUpdate={(state) => {
+							capturedState = state
+						}}
+					/>
+				</PatcherChatProvider>,
+			)
+
+			expect(capturedState).toEqual({ events: {} })
+		})
+
+		it("should handle supervisor:patcherEvent messages", () => {
+			let capturedState: any
+
+			render(
+				<PatcherChatProvider>
+					<TestComponent
+						onStateUpdate={(state) => {
+							capturedState = state
+						}}
+					/>
+				</PatcherChatProvider>,
+			)
+
+			// Simulate a supervisor:patcherEvent message
+			const patcherMessage = {
+				type: "supervisor:patcherEvent",
+				messageId: "test-message-123",
+				classification: "applied" as PatcherClassification,
+				file: "/path/to/test.ts",
+				error: undefined,
+				suggestedPlan: undefined,
+			}
+
+			act(() => {
+				fireEvent(window, new MessageEvent("message", { data: patcherMessage }))
+			})
+
+			expect(capturedState.events["test-message-123"]).toBeDefined()
+			expect(capturedState.events["test-message-123"].messageId).toBe("test-message-123")
+			expect(capturedState.events["test-message-123"].classification).toBe("applied")
+			expect(capturedState.events["test-message-123"].file).toBe("/path/to/test.ts")
+			expect(capturedState.events["test-message-123"].ts).toBeTypeOf("number")
+		})
+
+		it("should handle supervisor:patcherEvent messages with error", () => {
+			let capturedState: any
+
+			render(
+				<PatcherChatProvider>
+					<TestComponent
+						onStateUpdate={(state) => {
+							capturedState = state
+						}}
+					/>
+				</PatcherChatProvider>,
+			)
+
+			// Simulate a supervisor:patcherEvent message with error
+			const patcherMessage = {
+				type: "supervisor:patcherEvent",
+				messageId: "test-message-456",
+				classification: "anchor_mismatch" as PatcherClassification,
+				file: "/path/to/test.ts",
+				error: "Anchor mismatch error",
+				suggestedPlan: { action: "retry" },
+			}
+
+			act(() => {
+				fireEvent(window, new MessageEvent("message", { data: patcherMessage }))
+			})
+
+			expect(capturedState.events["test-message-456"]).toBeDefined()
+			expect(capturedState.events["test-message-456"].error).toBe("Anchor mismatch error")
+			expect(capturedState.events["test-message-456"].suggestedPlan).toEqual({ action: "retry" })
+		})
+
+		it("should ignore non-supervisor:patcherEvent messages", () => {
+			let capturedState: any
+
+			render(
+				<PatcherChatProvider>
+					<TestComponent
+						onStateUpdate={(state) => {
+							capturedState = state
+						}}
+					/>
+				</PatcherChatProvider>,
+			)
+
+			// Simulate a different message type
+			const otherMessage = {
+				type: "other:message",
+				data: "should be ignored",
+			}
+
+			act(() => {
+				fireEvent(window, new MessageEvent("message", { data: otherMessage }))
+			})
+
+			// State should remain 
+…[truncated]
+
+# note: truncated to stay within per-file budget

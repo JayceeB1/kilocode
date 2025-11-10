@@ -94,3 +94,13 @@ kilocode-local-supervisor-kickstart-plan.md
 **/mcp*/**/*config*.json
 merge-conflict-resolution-final-report.md
 packages/supervisor-service/test*
+llm-context/components-context.txt
+llm-context/docs-context.txt
+llm-context/state-context.txt
+llm-context/supervisor-service-context.txt
+llm-context/supervisor-sidecar-context.txt
+llm-context/utils-context.txt
+llm-context/webview-context.txt
+scripts/generate_supervisor_context.py
+scripts/update_supervisor_ui_context.py
+scripts/__pycache__/generate_supervisor_context.cpython-39.pyc
