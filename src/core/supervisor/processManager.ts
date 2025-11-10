@@ -21,7 +21,7 @@ export function startSupervisorService(serviceEntryAbsPath: string, bind: string
 	env.SUPERVISOR_PORT = String(port)
 
 	const nodeBin = process.execPath
-	const proc = spawn(nodeBin, args, { env, stdio: ["ignore", "pipe", "pipe"] })
+	const proc = spawn(nodeBin, args, { env, stdio: ["pipe", "pipe", "pipe"] })
 	state.proc = proc
 
 	proc.stdout.on("data", (d) => console.log(`[supervisor-service] ${String(d)}`))
@@ -32,7 +32,6 @@ export function startSupervisorService(serviceEntryAbsPath: string, bind: string
 	})
 
 	// Store process reference for cleanup
-	const context = vscode.extensions.getExtension("kilocode.kilo-code")?.extensionContext
 	if (context) {
 		context.subscriptions.push({
 			dispose: () => {
