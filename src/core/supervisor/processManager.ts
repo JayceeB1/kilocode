@@ -31,19 +31,7 @@ export function startSupervisorService(serviceEntryAbsPath: string, bind: string
 		state.proc = undefined
 	})
 
-	// Store process reference for cleanup
-	if (context) {
-		context.subscriptions.push({
-			dispose: () => {
-				if (state.proc) {
-					try {
-						state.proc.kill("SIGTERM")
-					} catch {}
-					state.proc = undefined
-				}
-			},
-		})
-	}
+	// Caller is responsible for cleanup via stopSupervisorService()
 }
 
 export function stopSupervisorService() {
